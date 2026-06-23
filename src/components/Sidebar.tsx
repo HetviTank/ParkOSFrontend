@@ -6,7 +6,7 @@ import Link from "next/link";
 import {
   Car, LogOut, LogIn, ShieldCheck, Truck, Ban, BookOpen,
   Users, Bell, FileText, BarChart2, MapPin, Layers, Settings,
-  ChevronRight, X, LayoutDashboard,
+  ChevronRight, X, LayoutDashboard, UserCog, Shield,
 } from "lucide-react";
 
 // ── nav config ────────────────────────────────────────────────────────────────
@@ -57,9 +57,16 @@ const NAV: NavGroup[] = [
   {
     section: "SETUP",
     items: [
-      { label: "Locations",       href: "/dashboard/locations",  icon: MapPin  },
-      { label: "Divisions & Rates", href: "/dashboard/divisions", icon: Layers  },
-      { label: "Settings",        href: "/dashboard/settings",   icon: Settings },
+      { label: "Locations",         href: "/dashboard/locations",  icon: MapPin   },
+      { label: "Divisions & Rates", href: "/dashboard/divisions",  icon: Layers   },
+      { label: "Settings",          href: "/dashboard/settings",   icon: Settings },
+    ],
+  },
+  {
+    section: "ADMINISTRATION",
+    items: [
+      { label: "Admin Users", href: "/dashboard/admin-users", icon: UserCog },
+      { label: "Roles",       href: "/dashboard/roles",       icon: Shield  },
     ],
   },
 ];
