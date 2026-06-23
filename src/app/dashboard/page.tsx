@@ -15,7 +15,7 @@ import type {
   LiveAlertItem, WeeklyRevenueItem, PaymentSplit,
 } from "@/types/dashboard";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
 // ── formatters ────────────────────────────────────────────────────────────────
 const fmt = (n: number) =>
