@@ -34,13 +34,32 @@ interface Khata { id: string; owner_id: string; monthly_rate: number; billing_da
 interface KhataTruck { id: string; khata_id: string; truck_id: string }
 interface TruckObj { id: string; truck_number: string }
 interface EnrichedKhata { khata: Khata; owner: Owner | null; khataTrucks: (KhataTruck & { truck_number?: string })[] }
+interface SessionBill {
+  id: string; status: string; check_in_time: string; check_out_time: string | null;
+  rate_per_day: number; gst_percent: number;
+  days: number | null; subtotal: number | null; gst_amount: number | null; total_amount: number | null;
+}
+interface TruckBill { truckNumber: string; sessions: SessionBill[]; totalAmount: number }
+interface KhataBill { trucks: TruckBill[]; grandTotal: number; periodLabel: string }
 
 const PAGE_SIZE = 8;
 const AVATAR_COLORS = ["bg-violet-500","bg-blue-500","bg-emerald-500","bg-amber-500","bg-red-500","bg-teal-500","bg-pink-500","bg-indigo-500"];
 function avatarColor(s: string) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) & 0x7fffffff; return AVATAR_COLORS[h % AVATAR_COLORS.length]; }
 function initials(n: string) { return n.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase(); }
 function fmtMobile(m: string) { return m.startsWith("+91") ? m : `+91 ${m}`; }
-function fmtRate(r: number) { return `₹${r.toLocaleString("en-IN")} / month`; }
+function fmtRupee(n: number) { return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`; }
+function getPeriodStart(billingDay: number): Date {
+  const now = new Date();
+  return now.getDate() >= billingDay
+    ? new Date(now.getFullYear(), now.getMonth(), billingDay)
+    : new Date(now.getFullYear(), now.getMonth() - 1, billingDay);
+}
+function getPeriodLabel(billingDay: number): string {
+  const from = getPeriodStart(billingDay);
+  const to = new Date();
+  const fmt = (d: Date) => d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  return `${fmt(from)} – ${fmt(to)}`;
+}
 function khataRef(idx: number) {
   return `KH-${String(idx + 1).padStart(3, "0")}`;
 }
@@ -69,10 +88,13 @@ export default function KhataMasterPage() {
   const [fName,    setFName]    = useState("");
   const [fMobile,  setFMobile]  = useState("");
   const [fCompany, setFCompany] = useState("");
-  const [fRate,    setFRate]    = useState("");
   const [fErr,     setFErr]     = useState("");
   const [fBusy,    setFBusy]    = useState(false);
   const [fOk,      setFOk]      = useState(false);
+
+  // billing
+  const [billingExpanded, setBillingExpanded] = useState<Record<string, boolean>>({});
+  const [billingData,     setBillingData]     = useState<Record<string, KhataBill | "loading" | "error">>({});
 
   // per-card link-truck state
   const [linkInput,   setLinkInput]   = useState<Record<string, string>>({});
@@ -157,27 +179,54 @@ export default function KhataMasterPage() {
     e.preventDefault();
     if (!fName.trim()) { setFErr("Owner name is required."); return; }
     if (!fMobile.trim() || fMobile.trim().replace(/\D/g,"").length < 10) { setFErr("Valid mobile number is required."); return; }
-    if (!fRate || isNaN(Number(fRate)) || Number(fRate) <= 0) { setFErr("Monthly rate must be a positive number."); return; }
     setFBusy(true); setFErr(""); setFOk(false);
     try {
-      // 1. create owner
       const owner = await apiFetch<Owner>("/owners", {
         method: "POST",
         body: JSON.stringify({ name: fName.trim(), primary_mobile: fMobile.trim().replace(/\D/g,""), company: fCompany.trim() || null }),
       });
       ownerCache.current[owner.id] = owner;
-
-      // 2. create khata
       await apiFetch<Khata>("/khatas", {
         method: "POST",
-        body: JSON.stringify({ owner_id: owner.id, monthly_rate: Number(fRate) }),
+        body: JSON.stringify({ owner_id: owner.id, monthly_rate: 0 }),
       });
-
-      setFName(""); setFMobile(""); setFCompany(""); setFRate("");
+      setFName(""); setFMobile(""); setFCompany("");
       setFOk(true); setTimeout(() => setFOk(false), 3000);
       fetchList(1); setPage(1);
     } catch (e) { setFErr(e instanceof Error ? e.message : "Failed to create khata."); }
     finally { setFBusy(false); }
+  }
+
+  async function loadBilling(khataId: string, khataTrucks: (KhataTruck & { truck_number?: string })[], billingDay: number) {
+    setBillingData(p => ({ ...p, [khataId]: "loading" }));
+    try {
+      const periodStart = getPeriodStart(billingDay);
+      const truckBills: TruckBill[] = [];
+
+      await Promise.allSettled(khataTrucks.map(async kt => {
+        const truckNumber = kt.truck_number ?? truckCache.current[kt.truck_id]?.truck_number ?? kt.truck_id.slice(0, 8).toUpperCase();
+        const sessRes = await apiFetch<{ list: SessionBill[] }>(
+          `/parking-sessions?truck_id=${kt.truck_id}&limit=100&sort_by=check_in_time&order=desc`
+        ).catch(() => ({ list: [] as SessionBill[] }));
+
+        const sessions = sessRes.list.filter(s => new Date(s.check_in_time) >= periodStart);
+
+        const totalAmount = sessions.reduce((sum, s) => {
+          if (s.total_amount !== null) return sum + s.total_amount;
+          const days = Math.max(1, Math.ceil((Date.now() - new Date(s.check_in_time).getTime()) / 86_400_000));
+          const sub = days * s.rate_per_day;
+          return sum + sub + Math.round(sub * s.gst_percent / 100 * 100) / 100;
+        }, 0);
+
+        truckBills.push({ truckNumber, sessions, totalAmount });
+      }));
+
+      truckBills.sort((a, b) => b.totalAmount - a.totalAmount);
+      const grandTotal = truckBills.reduce((s, t) => s + t.totalAmount, 0);
+      setBillingData(p => ({ ...p, [khataId]: { trucks: truckBills, grandTotal, periodLabel: getPeriodLabel(billingDay) } }));
+    } catch {
+      setBillingData(p => ({ ...p, [khataId]: "error" }));
+    }
   }
 
   async function handleLink(khataId: string) {
@@ -349,22 +398,10 @@ export default function KhataMasterPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5">Company / Firm</label>
-                <input value={fCompany} onChange={e => setFCompany(e.target.value)}
-                  placeholder="Firm name" className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-                  Monthly rate <span className="text-red-400">*</span>
-                </label>
-                <div className="relative">
-                  <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
-                  <input value={fRate} onChange={e => { setFRate(e.target.value.replace(/[^\d.]/g, "")); setFErr(""); }}
-                    placeholder="3500" className={inputCls + " pl-8"} />
-                </div>
-              </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Company / Firm</label>
+              <input value={fCompany} onChange={e => setFCompany(e.target.value)}
+                placeholder="Firm name" className={inputCls} />
             </div>
 
             {fErr && (
@@ -515,14 +552,85 @@ export default function KhataMasterPage() {
                   </div>
                 )}
 
-                {/* rate */}
-                <div className="flex items-center gap-1.5 px-5 pb-3">
-                  <IndianRupee className="w-3.5 h-3.5 text-gray-400" />
-                  <span className="text-xs font-semibold text-gray-600">{fmtRate(khata.monthly_rate)}</span>
-                  <span className="text-gray-300 mx-1">·</span>
-                  <span className="text-xs text-gray-400">Billing on day {khata.billing_day}</span>
-                  <span className="text-gray-300 mx-1">·</span>
-                  <span className="text-xs text-gray-400">{khata.grace_days}d grace</span>
+                {/* billing summary */}
+                <div className="mx-5 mb-3 rounded-xl border border-violet-100 bg-violet-50/50 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !billingExpanded[khata.id];
+                      setBillingExpanded(p => ({ ...p, [khata.id]: next }));
+                      if (next && !billingData[khata.id]) {
+                        loadBilling(khata.id, khataTrucks, khata.billing_day);
+                      }
+                    }}
+                    className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-violet-50 transition"
+                  >
+                    <div className="flex items-center gap-2">
+                      <IndianRupee className="w-3.5 h-3.5 text-violet-500" />
+                      <span className="text-xs font-semibold text-violet-700">This month&apos;s bill</span>
+                      <span className="text-[10px] text-violet-400">Billing day {khata.billing_day}</span>
+                    </div>
+                    <span className="text-[10px] font-semibold text-violet-500">
+                      {billingExpanded[khata.id] ? "▲ Hide" : "▼ View"}
+                    </span>
+                  </button>
+
+                  {billingExpanded[khata.id] && (
+                    <div className="border-t border-violet-100 px-4 py-3 space-y-2">
+                      {billingData[khata.id] === "loading" && (
+                        <div className="flex items-center gap-2 text-xs text-violet-500 py-1">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />Loading sessions…
+                        </div>
+                      )}
+                      {billingData[khata.id] === "error" && (
+                        <p className="text-xs text-red-500 flex items-center gap-1">
+                          <AlertCircle className="w-3.5 h-3.5" />Failed to load billing data.
+                        </p>
+                      )}
+                      {typeof billingData[khata.id] === "object" && billingData[khata.id] !== null && billingData[khata.id] !== "loading" && billingData[khata.id] !== "error" && (() => {
+                        const bill = billingData[khata.id] as KhataBill;
+                        return (
+                          <>
+                            <p className="text-[10px] text-violet-400 font-semibold uppercase tracking-wider">
+                              Period: {bill.periodLabel}
+                            </p>
+                            {bill.trucks.length === 0 && (
+                              <p className="text-xs text-gray-400 italic">No sessions in this billing period.</p>
+                            )}
+                            {bill.trucks.map(t => (
+                              <div key={t.truckNumber} className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <Truck className="w-3 h-3 text-blue-400 shrink-0" />
+                                  <span className="text-xs font-mono font-bold text-gray-800 truncate">{t.truckNumber}</span>
+                                  <span className="text-[10px] text-gray-400 shrink-0">
+                                    {t.sessions.length} session{t.sessions.length !== 1 ? "s" : ""} ·{" "}
+                                    {t.sessions.reduce((d, s) => {
+                                      if (s.days) return d + s.days;
+                                      return d + Math.max(1, Math.ceil((Date.now() - new Date(s.check_in_time).getTime()) / 86_400_000));
+                                    }, 0)}d
+                                  </span>
+                                </div>
+                                <span className="text-xs font-semibold text-gray-700 shrink-0">{fmtRupee(t.totalAmount)}</span>
+                              </div>
+                            ))}
+                            {bill.trucks.length > 0 && (
+                              <div className="border-t border-violet-200 pt-2 flex items-center justify-between">
+                                <span className="text-xs font-bold text-violet-800">Total payable</span>
+                                <span className="text-sm font-extrabold text-violet-700">{fmtRupee(bill.grandTotal)}</span>
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => loadBilling(khata.id, khataTrucks, khata.billing_day)}
+                              className="text-[10px] text-violet-400 hover:text-violet-600 flex items-center gap-1 pt-0.5 transition"
+                            >
+                              <RefreshCw className="w-3 h-3" />Refresh
+                            </button>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
 
                 {/* trucks */}

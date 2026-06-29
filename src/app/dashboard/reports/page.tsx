@@ -89,8 +89,8 @@ function BarChart({ bars, color = "#4f46e5" }: { bars: { label: string; value: n
     <div className="flex gap-3 h-48">
       {/* y-axis */}
       <div className="flex flex-col-reverse justify-between pb-6 pr-1 shrink-0">
-        {yTicks.map(t => (
-          <span key={t} className="text-[10px] text-gray-400 leading-none text-right w-10">{fmtShort(t)}</span>
+        {yTicks.map((t, i) => (
+          <span key={i} className="text-[10px] text-gray-400 leading-none text-right w-10">{fmtShort(t)}</span>
         ))}
       </div>
       {/* bars */}

@@ -226,6 +226,22 @@ export default function CheckOutPage() {
     if (driverMatch === null)      { setSubmitError("Please verify the driver before completing."); return; }
     if (driverMatch === "mismatch") { setSubmitError("Checkout blocked — driver mismatch is flagged. Resolve the identity before releasing the truck."); return; }
 
+    // final blacklist guard before releasing
+    try {
+      const q = truck?.truck_number?.toUpperCase() ?? "";
+      if (q) {
+        const blRes = await apiFetch<{ list: { truck_number: string; reason: string; is_active: boolean }[] }>(
+          `/blacklists?search=${encodeURIComponent(q)}&limit=10`
+        ).catch(() => ({ list: [] as { truck_number: string; reason: string; is_active: boolean }[] }));
+        const blEntry = blRes.list?.find(b => b.is_active && b.truck_number.toUpperCase() === q);
+        if (blEntry) {
+          setBlacklistReason(blEntry.reason || "No reason provided.");
+          setShowBlacklisted(true);
+          return;
+        }
+      }
+    } catch { /* ignore — don't block checkout on blacklist fetch error */ }
+
     const nowISO      = new Date().toISOString();
     const finalDays   = billableDays(session.check_in_time);
     const finalSub    = finalDays * session.rate_per_day;
@@ -357,6 +373,33 @@ export default function CheckOutPage() {
   // ── main render ───────────────────────────────────────────────────────────────
   return (
     <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto space-y-5">
+
+      {/* Blacklisted truck blocking modal */}
+      {showBlacklisted && typeof window !== "undefined" && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div className="relative bg-white rounded-3xl shadow-2xl px-10 py-10 flex flex-col items-center text-center max-w-sm w-full mx-4">
+            <div className="relative mb-6">
+              <div className="w-24 h-24 rounded-full border-4 border-red-400 animate-ping absolute inset-0 opacity-20" />
+              <div className="w-24 h-24 rounded-full border-4 border-red-300 bg-red-50 flex items-center justify-center">
+                <ShieldX className="w-12 h-12 text-red-500" strokeWidth={1.5} />
+              </div>
+            </div>
+            <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Truck Blacklisted</h2>
+            <p className="text-sm text-gray-500 mb-4">This truck is on the blacklist and cannot be checked out.</p>
+            <div className="w-full bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-6">
+              <p className="text-xs font-semibold text-red-500 uppercase tracking-wider mb-1">Reason</p>
+              <p className="text-sm text-gray-700">{blacklistReason}</p>
+            </div>
+            <button
+              onClick={() => setShowBlacklisted(false)}
+              className="w-full py-3 rounded-xl bg-red-600 text-white font-bold text-sm hover:bg-red-700 transition">
+              Understood — Go back
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* Check-out success modal */}
       {done && typeof window !== "undefined" && createPortal(
