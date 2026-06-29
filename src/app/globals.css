@@ -41,3 +41,8 @@ body {
 .animate-spin-slow {
   animation: spin-slow 8s linear infinite;
 }
+
+@keyframes shrink {
+  from { width: 100%; }
+  to   { width: 0%; }
+}

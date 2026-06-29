@@ -3,9 +3,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
-  ChevronRight, BookOpen, Phone, Building2, Truck,
+  ChevronRight, BookOpen, Truck,
   Plus, X, Loader2, AlertCircle, Link2, ShieldCheck,
   ChevronLeft, ChevronRight as Next, Info, IndianRupee, RefreshCw,
+  Pencil, Trash2, CheckCircle2,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -40,9 +41,8 @@ function avatarColor(s: string) { let h = 0; for (const c of s) h = (h * 31 + c.
 function initials(n: string) { return n.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase(); }
 function fmtMobile(m: string) { return m.startsWith("+91") ? m : `+91 ${m}`; }
 function fmtRate(r: number) { return `₹${r.toLocaleString("en-IN")} / month`; }
-function khataRef(createdAt: string | null, idx: number) {
-  const n = idx + 1;
-  return `KH-${String(n).padStart(3, "0")}`;
+function khataRef(idx: number) {
+  return `KH-${String(idx + 1).padStart(3, "0")}`;
 }
 function statusFor(k: Khata): { label: string; cls: string } {
   if (!k.is_active) return { label: "Inactive", cls: "bg-gray-100 text-gray-500 border border-gray-200" };
@@ -70,7 +70,6 @@ export default function KhataMasterPage() {
   const [fMobile,  setFMobile]  = useState("");
   const [fCompany, setFCompany] = useState("");
   const [fRate,    setFRate]    = useState("");
-  const [fTrucks,  setFTrucks]  = useState("");
   const [fErr,     setFErr]     = useState("");
   const [fBusy,    setFBusy]    = useState(false);
   const [fOk,      setFOk]      = useState(false);
@@ -80,6 +79,22 @@ export default function KhataMasterPage() {
   const [linkBusy,    setLinkBusy]    = useState<Record<string, boolean>>({});
   const [linkErr,     setLinkErr]     = useState<Record<string, string>>({});
   const [unlinkBusy,  setUnlinkBusy]  = useState<Record<string, boolean>>({});
+  // when truck not found: holds the selected truck_type for registration
+  const [linkNewType, setLinkNewType] = useState<Record<string, string>>({});
+
+  // ── edit drawer
+  const [editRow,        setEditRow]        = useState<EnrichedKhata | null>(null);
+  const [editRate,       setEditRate]       = useState("");
+  const [editBillingDay, setEditBillingDay] = useState("");
+  const [editGraceDays,  setEditGraceDays]  = useState("");
+  const [editBusy,       setEditBusy]       = useState(false);
+  const [editErr,        setEditErr]        = useState("");
+  const [editOk,         setEditOk]         = useState(false);
+  const editDrawerRef = useRef<HTMLDivElement>(null);
+
+  // ── delete confirm & busy per card
+  const [deleteConfirm, setDeleteConfirm] = useState<Record<string, boolean>>({});
+  const [deleteBusy,    setDeleteBusy]    = useState<Record<string, boolean>>({});
 
   const enrich = useCallback(async (khatas: Khata[]): Promise<EnrichedKhata[]> => {
     // collect missing owner IDs
@@ -153,21 +168,12 @@ export default function KhataMasterPage() {
       ownerCache.current[owner.id] = owner;
 
       // 2. create khata
-      const khata = await apiFetch<Khata>("/khatas", {
+      await apiFetch<Khata>("/khatas", {
         method: "POST",
         body: JSON.stringify({ owner_id: owner.id, monthly_rate: Number(fRate) }),
       });
 
-      // 3. link trucks
-      if (fTrucks.trim()) {
-        const nums = fTrucks.split(",").map(s => s.trim()).filter(Boolean);
-        await Promise.allSettled(nums.map(async num => {
-          const truck_id = await resolveTruckId(num);
-          await apiFetch("/khata-trucks", { method: "POST", body: JSON.stringify({ khata_id: khata.id, truck_id }) });
-        }));
-      }
-
-      setFName(""); setFMobile(""); setFCompany(""); setFRate(""); setFTrucks("");
+      setFName(""); setFMobile(""); setFCompany(""); setFRate("");
       setFOk(true); setTimeout(() => setFOk(false), 3000);
       fetchList(1); setPage(1);
     } catch (e) { setFErr(e instanceof Error ? e.message : "Failed to create khata."); }
@@ -177,10 +183,36 @@ export default function KhataMasterPage() {
   async function handleLink(khataId: string) {
     const num = (linkInput[khataId] ?? "").trim().toUpperCase();
     if (!num) return;
+    const pendingType = linkNewType[khataId];
     setLinkBusy(p => ({ ...p, [khataId]: true }));
     setLinkErr(p => ({ ...p, [khataId]: "" }));
     try {
-      const truck_id = await resolveTruckId(num);
+      let truck_id: string;
+      try {
+        truck_id = await resolveTruckId(num);
+        // truck found — clear any pending-register state
+        setLinkNewType(p => { const n = { ...p }; delete n[khataId]; return n; });
+      } catch {
+        if (!pendingType) {
+          // first attempt — truck not found, show type selector
+          setLinkNewType(p => ({ ...p, [khataId]: "heavy" }));
+          setLinkErr(p => ({ ...p, [khataId]: `"${num}" is not registered yet. Pick a type below and click Link to register & link it.` }));
+          return;
+        }
+        // second attempt — user picked a type, register truck now
+        const row = rows.find(r => r.khata.id === khataId);
+        const newTruck = await apiFetch<TruckObj>("/trucks", {
+          method: "POST",
+          body: JSON.stringify({
+            truck_number: num,
+            truck_type: pendingType,
+            owner_id: row?.owner?.id ?? null,
+          }),
+        });
+        truckCache.current[newTruck.id] = newTruck;
+        truck_id = newTruck.id;
+        setLinkNewType(p => { const n = { ...p }; delete n[khataId]; return n; });
+      }
       const kt = await apiFetch<KhataTruck>("/khata-trucks", {
         method: "POST",
         body: JSON.stringify({ khata_id: khataId, truck_id }),
@@ -191,6 +223,7 @@ export default function KhataMasterPage() {
         : r
       ));
       setLinkInput(p => ({ ...p, [khataId]: "" }));
+      setLinkErr(p => ({ ...p, [khataId]: "" }));
     } catch (e) { setLinkErr(p => ({ ...p, [khataId]: e instanceof Error ? e.message : "Failed." })); }
     finally { setLinkBusy(p => ({ ...p, [khataId]: false })); }
   }
@@ -206,6 +239,62 @@ export default function KhataMasterPage() {
     } catch { /* silent */ }
     finally { setUnlinkBusy(p => ({ ...p, [ktId]: false })); }
   }
+
+  // ── edit drawer handlers ─────────────────────────────────────────────────────
+  function openEdit(row: EnrichedKhata) {
+    setEditRow(row);
+    setEditRate(String(row.khata.monthly_rate));
+    setEditBillingDay(String(row.khata.billing_day));
+    setEditGraceDays(String(row.khata.grace_days));
+    setEditErr(""); setEditOk(false);
+  }
+
+  async function handleSaveEdit(e: { preventDefault(): void }) {
+    e.preventDefault();
+    if (!editRow) return;
+    if (!editRate || isNaN(Number(editRate)) || Number(editRate) <= 0) { setEditErr("Monthly rate must be a positive number."); return; }
+    setEditBusy(true); setEditErr(""); setEditOk(false);
+    try {
+      const updated = await apiFetch<Khata>(`/khatas/${editRow.khata.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          owner_id:    editRow.khata.owner_id,
+          monthly_rate: Number(editRate),
+          billing_day:  Number(editBillingDay) || 1,
+          grace_days:   Number(editGraceDays)  || 0,
+          is_active:    editRow.khata.is_active,
+        }),
+      });
+      setRows(prev => prev.map(r =>
+        r.khata.id === editRow.khata.id ? { ...r, khata: updated } : r
+      ));
+      setEditOk(true);
+      setTimeout(() => { setEditRow(null); setEditOk(false); }, 1200);
+    } catch (e) { setEditErr(e instanceof Error ? e.message : "Failed to save."); }
+    finally { setEditBusy(false); }
+  }
+
+  // ── delete handlers ──────────────────────────────────────────────────────────
+  async function handleDelete(khataId: string) {
+    setDeleteBusy(p => ({ ...p, [khataId]: true }));
+    try {
+      await apiFetch(`/khatas/${khataId}`, { method: "DELETE" });
+      setRows(prev => prev.filter(r => r.khata.id !== khataId));
+      setTotal(p => Math.max(0, p - 1));
+      setDeleteConfirm(p => { const n = { ...p }; delete n[khataId]; return n; });
+    } catch { /* silent */ }
+    finally { setDeleteBusy(p => ({ ...p, [khataId]: false })); }
+  }
+
+  // click-outside for edit drawer
+  useEffect(() => {
+    if (!editRow) return;
+    const h = (e: MouseEvent) => {
+      if (editDrawerRef.current && !editDrawerRef.current.contains(e.target as Node)) setEditRow(null);
+    };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [editRow]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -276,14 +365,6 @@ export default function KhataMasterPage() {
                     placeholder="3500" className={inputCls + " pl-8"} />
                 </div>
               </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-                Link trucks now <span className="text-gray-400 font-normal">(optional, comma separated)</span>
-              </label>
-              <input value={fTrucks} onChange={e => setFTrucks(e.target.value.toUpperCase())}
-                placeholder="GJ11AB1234, GJ09CD5678" className={inputCls} />
             </div>
 
             {fErr && (
@@ -371,7 +452,7 @@ export default function KhataMasterPage() {
           {rows.map((row, idx) => {
             const { khata, owner, khataTrucks } = row;
             const status = statusFor(khata);
-            const ref = khataRef(khata.created_at, (page - 1) * PAGE_SIZE + idx);
+            const ref = khataRef((page - 1) * PAGE_SIZE + idx);
             const name = owner?.name ?? "Unknown";
             const linkVal = linkInput[khata.id] ?? "";
             const isLinkBusy = linkBusy[khata.id] ?? false;
@@ -391,14 +472,48 @@ export default function KhataMasterPage() {
                     <p className="text-xs text-gray-400 mt-0.5">{owner ? fmtMobile(owner.primary_mobile) : "—"}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1.5 shrink-0">
-                    <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full font-mono">
-                      {ref}
-                    </span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full font-mono">
+                        {ref}
+                      </span>
+                      <button
+                        onClick={() => openEdit(row)}
+                        className="p-1.5 text-gray-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition"
+                        title="Edit khata">
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setDeleteConfirm(p => ({ ...p, [khata.id]: true }))}
+                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                        title="Delete khata">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                     <span className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${status.cls}`}>
                       {status.label}
                     </span>
                   </div>
                 </div>
+
+                {/* delete confirmation */}
+                {deleteConfirm[khata.id] && (
+                  <div className="mx-5 mb-3 flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                    <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                    <p className="text-xs text-red-700 font-medium flex-1">Delete this khata account? This cannot be undone.</p>
+                    <button
+                      onClick={() => handleDelete(khata.id)}
+                      disabled={deleteBusy[khata.id]}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:bg-red-300 rounded-lg transition">
+                      {deleteBusy[khata.id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                      Delete
+                    </button>
+                    <button
+                      onClick={() => setDeleteConfirm(p => { const n = { ...p }; delete n[khata.id]; return n; })}
+                      className="p-1 text-gray-400 hover:text-gray-700 transition">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
 
                 {/* rate */}
                 <div className="flex items-center gap-1.5 px-5 pb-3">
@@ -442,10 +557,15 @@ export default function KhataMasterPage() {
                   <div className="flex gap-2 pt-0.5">
                     <input
                       value={linkVal}
-                      onChange={e => setLinkInput(p => ({ ...p, [khata.id]: e.target.value.toUpperCase() }))}
+                      onChange={e => {
+                        setLinkInput(p => ({ ...p, [khata.id]: e.target.value.toUpperCase() }));
+                        // reset type selector if truck number changes
+                        setLinkNewType(p => { const n = { ...p }; delete n[khata.id]; return n; });
+                        setLinkErr(p => ({ ...p, [khata.id]: "" }));
+                      }}
                       onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleLink(khata.id); } }}
                       placeholder="Truck number to link..."
-                      className="flex-1 px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent focus:bg-white transition font-mono"
+                      className="flex-1 px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent focus:bg-white transition font-mono uppercase"
                     />
                     <button
                       onClick={() => handleLink(khata.id)}
@@ -455,7 +575,60 @@ export default function KhataMasterPage() {
                       Link
                     </button>
                   </div>
-                  {linkErrMsg && (
+
+                  {/* truck-not-found: inline type selector */}
+                  {linkNewType[khata.id] !== undefined && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
+                      <p className="text-xs text-amber-700 flex items-center gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        {linkErrMsg}
+                      </p>
+                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Select truck type</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { value: "heavy",   label: "Heavy (20T+)"  },
+                          { value: "medium",  label: "Medium (10-20T)"},
+                          { value: "light",   label: "Light (<10T)"  },
+                          { value: "trailer", label: "Trailer"       },
+                          { value: "tanker",  label: "Tanker"        },
+                        ].map(opt => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setLinkNewType(p => ({ ...p, [khata.id]: opt.value }))}
+                            className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border transition ${
+                              linkNewType[khata.id] === opt.value
+                                ? "bg-violet-600 text-white border-violet-600"
+                                : "bg-white text-gray-600 border-gray-200 hover:border-violet-300"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex gap-2 pt-0.5">
+                        <button
+                          onClick={() => handleLink(khata.id)}
+                          disabled={isLinkBusy}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 text-white text-xs font-bold rounded-lg transition">
+                          {isLinkBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />}
+                          Register &amp; link
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLinkNewType(p => { const n = { ...p }; delete n[khata.id]; return n; });
+                            setLinkErr(p => ({ ...p, [khata.id]: "" }));
+                          }}
+                          className="px-3 py-1.5 text-xs font-semibold text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* generic error (not the not-found prompt) */}
+                  {linkErrMsg && linkNewType[khata.id] === undefined && (
                     <p className="text-xs text-red-600 flex items-center gap-1">
                       <AlertCircle className="w-3 h-3" />{linkErrMsg}
                     </p>
@@ -490,6 +663,96 @@ export default function KhataMasterPage() {
           )}
         </div>
       </div>
+
+      {/* ── Edit drawer ─────────────────────────────────────────────────────── */}
+      {editRow && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/30 backdrop-blur-sm" onClick={() => setEditRow(null)} />
+          <div ref={editDrawerRef} className="w-full max-w-md bg-white shadow-2xl flex flex-col h-full">
+
+            {/* header */}
+            <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-violet-100 rounded-xl flex items-center justify-center">
+                  <Pencil className="w-4 h-4 text-violet-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-gray-900">Edit khata</p>
+                  <p className="text-xs text-gray-400">{editRow.owner?.name ?? "Unknown owner"}</p>
+                </div>
+              </div>
+              <button onClick={() => setEditRow(null)}
+                className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* form */}
+            <form id="edit-khata-form" onSubmit={handleSaveEdit} className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+
+              {/* monthly rate */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                  Monthly rate <span className="text-red-400">*</span>
+                </label>
+                <div className="relative">
+                  <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+                  <input
+                    type="number" min={1} value={editRate}
+                    onChange={e => { setEditRate(e.target.value); setEditErr(""); }}
+                    className={inputCls + " pl-8"}
+                  />
+                </div>
+              </div>
+
+              {/* billing day + grace days */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">Billing day (1–31)</label>
+                  <input
+                    type="number" min={1} max={31} value={editBillingDay}
+                    onChange={e => setEditBillingDay(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">Grace days</label>
+                  <input
+                    type="number" min={0} value={editGraceDays}
+                    onChange={e => setEditGraceDays(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+              </div>
+
+              {editErr && (
+                <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5">
+                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                  <p className="text-sm text-red-700">{editErr}</p>
+                </div>
+              )}
+              {editOk && (
+                <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <p className="text-sm text-emerald-700 font-semibold">Saved!</p>
+                </div>
+              )}
+            </form>
+
+            {/* footer */}
+            <div className="border-t border-gray-100 px-6 py-4 flex gap-3 bg-gray-50/50">
+              <button type="button" onClick={() => setEditRow(null)}
+                className="flex-1 py-2.5 text-sm font-semibold text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition">
+                Cancel
+              </button>
+              <button type="submit" form="edit-khata-form" disabled={editBusy}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 rounded-xl shadow-sm transition">
+                {editBusy ? <><Loader2 className="w-4 h-4 animate-spin" />Saving…</> : "Save changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
