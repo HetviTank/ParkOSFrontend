@@ -7,7 +7,7 @@ import {
   Search, RefreshCw, X, Loader2, AlertCircle,
   Car, User, MapPin, Clock, LogOut, Receipt,
   ShieldX, Download, ArrowUpDown, ChevronDown,
-  Pencil, Trash2, CheckCircle2,
+  Pencil, Trash2, CheckCircle2, Eye,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -110,11 +110,11 @@ const COL_DEFS = [
   { label: "Owner / Driver", sortKey: null,             minW: 140 },
   { label: "Location",       sortKey: null,             minW: 130 },
   { label: "Check-in",       sortKey: "check_in_time",  minW: 120 },
-  { label: "Check-out",      sortKey: null,             minW: 100 },
+  { label: "Check-out / Driver",  sortKey: null,        minW: 140 },
   { label: "Type / Status",  sortKey: null,             minW: 110 },
   { label: "Action",         sortKey: null,             minW: 180 },
 ];
-const INIT_WIDTHS = [160, 200, 190, 160, 130, 140, 210];
+const INIT_WIDTHS = [160, 200, 190, 160, 160, 140, 210];
 
 // ── component ─────────────────────────────────────────────────────────────────
 export default function AllTrucksPage() {
@@ -742,7 +742,7 @@ function TruckRow({ session: s, colWidths, onReceipt, onEdit, onDelete, deleteId
           </p>
         </div>
 
-        {/* 5 — Check-out time */}
+        {/* 5 — Check-out time + driver verification */}
         <div className="px-4 py-4 min-w-0">
           {s.check_out_time ? (
             <>
@@ -750,6 +750,16 @@ function TruckRow({ session: s, colWidths, onReceipt, onEdit, onDelete, deleteId
               <p className="text-xs text-teal-500 mt-0.5 flex items-center gap-1">
                 <Clock className="w-3 h-3 shrink-0" />{fmtTime(s.check_out_time)}
               </p>
+              {s.driver_match && (
+                <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full mt-1 ${
+                  s.driver_match === "match"    ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
+                  s.driver_match === "override" ? "bg-blue-50 text-blue-700 border border-blue-200" :
+                                                  "bg-rose-50 text-rose-700 border border-rose-200"
+                }`}>
+                  {s.driver_match === "match"    ? "✓ Verified" :
+                   s.driver_match === "override" ? "⊘ Override" : "✗ Mismatch"}
+                </span>
+              )}
             </>
           ) : (
             <span className="text-sm text-gray-300 font-medium">—</span>
@@ -776,6 +786,10 @@ function TruckRow({ session: s, colWidths, onReceipt, onEdit, onDelete, deleteId
 
         {/* 7 — Actions */}
         <div className="px-4 py-4 flex items-center gap-2">
+          <Link href={`/dashboard/trucks/${s.id}`} title="View details"
+            className="p-2 text-gray-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition">
+            <Eye className="w-3.5 h-3.5" />
+          </Link>
           <button onClick={onEdit} title="Edit"
             className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition">
             <Pencil className="w-3.5 h-3.5" />
@@ -785,13 +799,13 @@ function TruckRow({ session: s, colWidths, onReceipt, onEdit, onDelete, deleteId
             <Trash2 className="w-3.5 h-3.5" />
           </button>
           {cfg.action === "checkout" && (
-            <Link href="/dashboard/check-out"
+            <Link href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`}
               className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-sm shadow-blue-200 transition">
               <LogOut className="w-3.5 h-3.5" />Checkout
             </Link>
           )}
           {cfg.action === "forceout" && (
-            <Link href="/dashboard/check-out"
+            <Link href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`}
               className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-sm shadow-red-200 transition">
               <ShieldX className="w-3.5 h-3.5" />Force out
             </Link>
@@ -854,18 +868,33 @@ function TruckRow({ session: s, colWidths, onReceipt, onEdit, onDelete, deleteId
         <div className="flex items-center justify-between gap-2">
           <div className="text-xs text-gray-500 space-y-0.5">
             <div><span className="text-gray-400">In  </span><span className="font-medium">{fmtDate(s.check_in_time)}</span> <span className="text-gray-400">{fmtTime(s.check_in_time)}</span></div>
-            {s.check_out_time && <div><span className="text-gray-400">Out </span><span className="font-medium text-teal-700">{fmtDate(s.check_out_time)}</span> <span className="text-teal-500">{fmtTime(s.check_out_time)}</span></div>}
+            {s.check_out_time && (
+              <div>
+                <span className="text-gray-400">Out </span>
+                <span className="font-medium text-teal-700">{fmtDate(s.check_out_time)}</span>
+                <span className="text-teal-500"> {fmtTime(s.check_out_time)}</span>
+              </div>
+            )}
+            {s.driver_match && s.check_out_time && (
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                s.driver_match === "match"    ? "bg-emerald-50 text-emerald-700" :
+                s.driver_match === "override" ? "bg-blue-50 text-blue-700" :
+                                                "bg-rose-50 text-rose-700"
+              }`}>
+                {s.driver_match === "match" ? "✓" : s.driver_match === "override" ? "⊘" : "✗"}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1.5">
             <button onClick={onEdit} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"><Pencil className="w-3.5 h-3.5" /></button>
             <button onClick={onDelete} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><Trash2 className="w-3.5 h-3.5" /></button>
             {cfg.action === "checkout" && (
-              <Link href="/dashboard/check-out" className="flex items-center gap-1 bg-blue-600 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition">
+              <Link href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`} className="flex items-center gap-1 bg-blue-600 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition">
                 <LogOut className="w-3 h-3" />Checkout
               </Link>
             )}
             {cfg.action === "forceout" && (
-              <Link href="/dashboard/check-out" className="flex items-center gap-1 bg-red-600 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition">
+              <Link href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`} className="flex items-center gap-1 bg-red-600 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition">
                 <ShieldX className="w-3 h-3" />Force out
               </Link>
             )}

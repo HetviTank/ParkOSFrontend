@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ChevronRight, ChevronLeft, ChevronRight as Next, RefreshCw,
   AlertTriangle, ShieldAlert, ShieldCheck, ShieldX,
-  User, Phone, MapPin, Clock, Car, Loader2,
-  AlertCircle, CheckCircle2, History, BadgeCheck, XCircle,
+  User, Phone, MapPin, Clock, Loader2,
+  AlertCircle, History, BadgeCheck,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -113,9 +114,9 @@ async function enrich(sessions: Session[]): Promise<Enriched[]> {
 
     return {
       ...s,
-      truckNumber: truck.vehicle_number ?? truck.number ?? truck.registration_number ?? s.truck_id.slice(0, 8).toUpperCase(),
+      truckNumber: truck.truck_number ?? truck.vehicle_number ?? truck.number ?? s.truck_id.slice(0, 8).toUpperCase(),
       ownerName:   owner.name ?? "—",
-      ownerMobile: owner.mobile ?? owner.phone ?? "",
+      ownerMobile: owner.primary_mobile ?? owner.mobile ?? owner.phone ?? "",
       divisionName: div.name ?? "—",
       slotLabel: slot ? `${div.name ?? "Div"} · ${slot.name ?? slot.number ?? "—"}` : "—",
       locationName: loc.name ?? "—",
@@ -125,6 +126,7 @@ async function enrich(sessions: Session[]): Promise<Enriched[]> {
 
 // ── component ─────────────────────────────────────────────────────────────────
 export default function VerificationPage() {
+  const router = useRouter();
   const [mismatches, setMismatches] = useState<Enriched[]>([]);
   const [history,    setHistory]    = useState<Enriched[]>([]);
   const [activeIdx,  setActiveIdx]  = useState(0);
@@ -188,41 +190,42 @@ export default function VerificationPage() {
     if (!overrideNote.trim()) { setApproveError("Please enter a reason for the override."); return; }
     setApproving(true); setApproveError("");
     try {
+      // Mark as admin-override approved (keep parked — payment happens on checkout page)
       await apiFetch(`/parking-sessions/${m.id}`, {
         method: "PUT",
         body: JSON.stringify({
-          truck_id:              m.truck_id,
-          owner_id:              m.owner_id,
-          location_id:           m.location_id,
-          division_id:           m.division_id,
-          slot_id:               m.slot_id,
-          entry_type:            m.entry_type,
+          truck_id:               m.truck_id,
+          owner_id:               m.owner_id,
+          location_id:            m.location_id,
+          division_id:            m.division_id,
+          slot_id:                m.slot_id,
+          entry_type:             m.entry_type,
           checkin_driver_name:    m.checkin_driver_name,
           checkin_driver_mobile:  m.checkin_driver_mobile,
           checkin_driver_licence: m.checkin_driver_licence,
           checkin_id_proof_type:  m.checkin_id_proof_type,
           check_in_time:          m.check_in_time,
           checkin_remarks:        m.checkin_remarks,
-          rate_per_day:           m.rate_per_day,
-          gst_percent:            m.gst_percent,
           checkout_driver_name:   m.checkout_driver_name,
           checkout_driver_mobile: m.checkout_driver_mobile,
-          check_out_time:         m.check_out_time ?? new Date().toISOString(),
           checkout_remarks:       overrideNote.trim(),
           driver_match:           "override",
           override_by:            adminId,
-          status:                 "released",
-          days:                   m.days     ?? 1,
-          subtotal:               m.subtotal ?? m.rate_per_day,
-          gst_amount:             m.gst_amount  ?? 0,
-          total_amount:           m.total_amount ?? m.rate_per_day,
+          status:                 "parked",
+          rate_per_day:           m.rate_per_day,
+          gst_percent:            m.gst_percent,
+          days:                   m.days,
+          subtotal:               m.subtotal,
+          gst_amount:             m.gst_amount,
+          total_amount:           m.total_amount,
         }),
       });
-      setOverrideNote("");
-      await load(true);
+      // Redirect to checkout page — payment + final release happens there
+      router.push(`/dashboard/check-out?truck=${encodeURIComponent(m.truckNumber)}`);
     } catch (err) {
       setApproveError(err instanceof Error ? err.message : "Failed to approve override.");
-    } finally { setApproving(false); }
+      setApproving(false);
+    }
   }
 
   function handleKeepHold() {

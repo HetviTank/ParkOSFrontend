@@ -8,7 +8,7 @@ import {
   Truck as TruckIcon, User, MapPin, Clock, Search, Check,
   AlertCircle, Loader2, CheckCircle2, ChevronRight,
   Car, FileText, IndianRupee, Info, ChevronDown, X as XIcon,
-  BookOpen, Calendar, IndianRupee as RupeeIcon,
+  BookOpen, Calendar, IndianRupee as RupeeIcon, ShieldX,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -118,6 +118,10 @@ export default function CheckInPage() {
   const [checkInDate, setCheckInDate] = useState(todayStr());
   const [checkInTime, setCheckInTime] = useState(nowTimeStr());
 
+  // ── blacklist
+  const [showBlacklisted, setShowBlacklisted] = useState(false);
+  const [blacklistReason,  setBlacklistReason]  = useState("");
+
   // ── submit
   const [submitting, setSubmitting]   = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -215,6 +219,20 @@ export default function CheckInPage() {
     searchRef.current = setTimeout(async () => {
       setSearchLoading(true);
       try {
+        // ── blacklist check first ──────────────────────────────────────────
+        const blRes = await apiFetch<{ list: { truck_number: string; reason: string; is_active: boolean }[] }>(
+          `/blacklists?search=${encodeURIComponent(number)}&limit=10`
+        ).catch(() => ({ list: [] }));
+        const blEntry = blRes.list?.find(
+          b => b.is_active && b.truck_number.toUpperCase() === number.trim().toUpperCase()
+        );
+        if (blEntry) {
+          setBlacklistReason(blEntry.reason || "No reason provided.");
+          setShowBlacklisted(true);
+          setTruckFound(null); setTruckId(null);
+          return;
+        }
+
         const r = await apiFetch<{ list: TruckItem[] }>(`/trucks?search=${encodeURIComponent(number)}&limit=5`);
         const match = r.list.find((t) => t.truck_number.toLowerCase() === number.toLowerCase());
         if (match) {
@@ -266,6 +284,21 @@ export default function CheckInPage() {
     if (!driverMobile.trim())return setSubmitError("Driver mobile is required.");
     if (!locationId)         return setSubmitError("Location is required.");
     if (!divisionId)         return setSubmitError("Division is required.");
+
+    // ── final blacklist guard ─────────────────────────────────────────────
+    try {
+      const blRes = await apiFetch<{ list: { truck_number: string; reason: string; is_active: boolean }[] }>(
+        `/blacklists?search=${encodeURIComponent(truckNumber.trim())}&limit=10`
+      );
+      const blEntry = blRes.list?.find(
+        b => b.is_active && b.truck_number.toUpperCase() === truckNumber.trim().toUpperCase()
+      );
+      if (blEntry) {
+        setBlacklistReason(blEntry.reason || "No reason provided.");
+        setShowBlacklisted(true);
+        return;
+      }
+    } catch { /* network error — allow submit to proceed */ }
 
     setSubmitting(true);
     try {
@@ -704,6 +737,36 @@ export default function CheckInPage() {
           </div>
         </div>
       </form>
+
+      {/* ── blacklist blocked modal ───────────────────────────────────────── */}
+      {showBlacklisted && typeof window !== "undefined" && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div className="relative bg-white rounded-3xl shadow-2xl px-10 py-10 flex flex-col items-center text-center max-w-sm w-full mx-4">
+            <div className="relative mb-6">
+              <div className="w-24 h-24 rounded-full border-4 border-red-400 animate-ping absolute inset-0 opacity-20" />
+              <div className="w-24 h-24 rounded-full border-4 border-red-300 bg-red-50 flex items-center justify-center">
+                <ShieldX className="w-12 h-12 text-red-500" strokeWidth={1.5} />
+              </div>
+            </div>
+            <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Truck Blacklisted</h2>
+            <p className="text-sm text-gray-500 mb-4">This truck is on the blacklist and <span className="font-semibold text-red-600">cannot be checked in</span>.</p>
+            {blacklistReason && (
+              <div className="w-full bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-5">
+                <p className="text-xs font-semibold text-red-400 uppercase tracking-widest mb-1">Reason</p>
+                <p className="text-sm text-red-700 font-medium">{blacklistReason}</p>
+              </div>
+            )}
+            <button
+              onClick={() => { setShowBlacklisted(false); setTruckNumber(""); setTruckFound(null); setTruckId(null); }}
+              className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold transition"
+            >
+              Understood — Go back
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* ── success modal ─────────────────────────────────────────────────── */}
       {toast && typeof window !== "undefined" && createPortal(
