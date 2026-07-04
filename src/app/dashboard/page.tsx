@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   TrendingUp, TrendingDown, AlertTriangle, Clock,
-  Layers, BarChart2, Activity, CreditCard, Loader2,
+  Layers, BarChart2, Activity, CreditCard, Loader2, ExternalLink,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -240,11 +241,11 @@ export default function DashboardPage() {
             </div>
 
             {/* ── Main grid: slot map + right panel ── */}
-            <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
-              <div className="xl:col-span-3">
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+              <div className="lg:col-span-3">
                 <SlotMapCard divisions={data.slot_map} />
               </div>
-              <div className="xl:col-span-2 flex flex-col gap-4">
+              <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
                 <DivisionOccupancyCard items={data.division_occupancy} />
                 <OverdueTrucksCard trucks={overdueTrucks} loading={overdueLoading} rulesConfigured={overdueRules.length > 0} />
               </div>
@@ -252,8 +253,8 @@ export default function DashboardPage() {
 
             {/* ── Charts row ── */}
             {mounted && (
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                <div className="xl:col-span-2">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="md:col-span-2">
                   <WeeklyRevenueCard data={data.weekly_revenue} />
                 </div>
                 <PaymentSplitCard split={data.payment_split} />
@@ -294,7 +295,7 @@ function KPICard({
 // ── Slot Map ──────────────────────────────────────────────────────────────────
 function SlotMapCard({ divisions }: { divisions: SlotMapDivision[] }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col max-h-[520px]">
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col h-full min-h-[320px]">
       <div className="flex items-center justify-between mb-4 shrink-0">
         <h2 className="font-semibold text-gray-900">Live Slot Map</h2>
         <div className="flex items-center gap-3 text-xs text-gray-500">
@@ -457,6 +458,13 @@ function OverdueTrucksCard({ trucks, loading, rulesConfigured }: {
                       In: {new Date(t.checkInTime).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                     </p>
                   </div>
+                  <Link
+                    href={`/dashboard/trucks/profile?truck=${encodeURIComponent(t.truckNumber)}`}
+                    className="shrink-0 flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    View
+                  </Link>
                 </div>
               </div>
             );
