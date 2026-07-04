@@ -86,7 +86,6 @@ export default function OwnersPage() {
 
   const drawerRef = useRef<HTMLDivElement>(null);
 
-  // close drawer on click outside
   useEffect(() => {
     if (!drawerOpen) return;
     const handler = (e: MouseEvent) => {
@@ -391,7 +390,6 @@ export default function OwnersPage() {
           <div className="flex-1 bg-black/30 backdrop-blur-sm" onClick={() => setDrawerOpen(false)} />
           <div ref={drawerRef}
             className="w-full max-w-md bg-white shadow-2xl flex flex-col h-full overflow-hidden">
-            {/* drawer header */}
             <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center">
@@ -405,7 +403,6 @@ export default function OwnersPage() {
               </button>
             </div>
 
-            {/* drawer form */}
             <form id="owner-form" onSubmit={handleAdd} className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1.5">Full name <span className="text-red-400">*</span></label>
@@ -466,7 +463,6 @@ export default function OwnersPage() {
               )}
             </form>
 
-            {/* drawer footer */}
             <div className="border-t border-gray-100 px-6 py-4 flex gap-3 bg-gray-50/50">
               <button type="button" onClick={() => setDrawerOpen(false)}
                 className="flex-1 py-2.5 text-sm font-semibold text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition">

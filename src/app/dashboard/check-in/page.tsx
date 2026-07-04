@@ -46,7 +46,7 @@ interface OwnerItem  { id: string; name: string; primary_mobile: string; company
 interface LocItem    { id: string; name: string; city: string | null }
 interface DivItem    { id: string; name: string; truck_type: string; rate_per_day: number; gst_percent: number | null; status: string }
 interface SlotItem   { id: string; code: string; status: string }
-interface KhataItem  { id: string; owner_id: string; monthly_rate: number; billing_day: number; grace_days: number; is_active: boolean }
+interface KhataItem  { id: string; owner_id: string; monthly_rate: number; billing_day: number; grace_days: number; is_active: boolean; is_deleted: boolean }
 
 const TRUCK_TYPES   = ["Heavy (20T+)", "Heavy (10-20T)", "Medium (5-10T)", "Light (<5T)", "Trailer", "Tanker"];
 const ID_PROOFS: Record<string, string> = {
@@ -130,9 +130,9 @@ export default function CheckInPage() {
   useEffect(() => {
     if (entryType !== "khata") return;
     setKhataLoading(true);
-    apiFetch<{ count: number; list: KhataItem[] }>("/khatas?limit=100")
+    apiFetch<{ count: number; list: KhataItem[] }>("/khatas?limit=100&is_deleted=false")
       .then(async (r) => {
-        const list = (r.list ?? []).filter(k => k.is_active);
+        const list = (r.list ?? []).filter(k => !k.is_deleted);
         setKhatas(list);
         // enrich owner names + cache full owner objects
         const uniqueIds = [...new Set(list.map(k => k.owner_id))];

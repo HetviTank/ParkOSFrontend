@@ -30,17 +30,25 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
 
 // ── types ─────────────────────────────────────────────────────────────────────
 interface Owner { id: string; name: string; company: string | null; primary_mobile: string }
-interface Khata { id: string; owner_id: string; monthly_rate: number; billing_day: number; grace_days: number; is_active: boolean; created_at: string | null }
+interface Khata { id: string; owner_id: string; billing_day: number; grace_days: number; is_active: boolean; is_deleted: boolean; created_at: string | null }
 interface KhataTruck { id: string; khata_id: string; truck_id: string }
 interface TruckObj { id: string; truck_number: string }
 interface EnrichedKhata { khata: Khata; owner: Owner | null; khataTrucks: (KhataTruck & { truck_number?: string })[] }
-interface SessionBill {
-  id: string; status: string; check_in_time: string; check_out_time: string | null;
-  rate_per_day: number; gst_percent: number;
-  days: number | null; subtotal: number | null; gst_amount: number | null; total_amount: number | null;
+interface BillSession {
+  session_id: string; status: string;
+  check_in_time: string; check_out_time: string | null;
+  days: number; rate_per_day: number;
+  subtotal: number; gst_percent: number; gst_amount: number; total_amount: number;
 }
-interface TruckBill { truckNumber: string; sessions: SessionBill[]; totalAmount: number }
-interface KhataBill { trucks: TruckBill[]; grandTotal: number; periodLabel: string }
+interface BillTruck {
+  truck_id: string; truck_number: string;
+  session_count: number; total_days: number; total_amount: number;
+  sessions: BillSession[];
+}
+interface KhataBill {
+  khata_id: string; period_start: string; billing_day: number;
+  trucks: BillTruck[]; grand_total: number;
+}
 
 const PAGE_SIZE = 8;
 const AVATAR_COLORS = ["bg-violet-500","bg-blue-500","bg-emerald-500","bg-amber-500","bg-red-500","bg-teal-500","bg-pink-500","bg-indigo-500"];
@@ -48,14 +56,8 @@ function avatarColor(s: string) { let h = 0; for (const c of s) h = (h * 31 + c.
 function initials(n: string) { return n.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase(); }
 function fmtMobile(m: string) { return m.startsWith("+91") ? m : `+91 ${m}`; }
 function fmtRupee(n: number) { return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`; }
-function getPeriodStart(billingDay: number): Date {
-  const now = new Date();
-  return now.getDate() >= billingDay
-    ? new Date(now.getFullYear(), now.getMonth(), billingDay)
-    : new Date(now.getFullYear(), now.getMonth() - 1, billingDay);
-}
-function getPeriodLabel(billingDay: number): string {
-  const from = getPeriodStart(billingDay);
+function fmtPeriodLabel(periodStart: string): string {
+  const from = new Date(periodStart);
   const to = new Date();
   const fmt = (d: Date) => d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
   return `${fmt(from)} – ${fmt(to)}`;
@@ -64,6 +66,7 @@ function khataRef(idx: number) {
   return `KH-${String(idx + 1).padStart(3, "0")}`;
 }
 function statusFor(k: Khata): { label: string; cls: string } {
+  if (k.is_deleted) return { label: "Deleted", cls: "bg-red-100 text-red-500 border border-red-200" };
   if (!k.is_active) return { label: "Inactive", cls: "bg-gray-100 text-gray-500 border border-gray-200" };
   const days = k.created_at ? Math.floor((Date.now() - new Date(k.created_at).getTime()) / 86400000) : 999;
   if (days < 30) return { label: "New account", cls: "bg-teal-100 text-teal-700 border border-teal-200" };
@@ -106,7 +109,6 @@ export default function KhataMasterPage() {
 
   // ── edit drawer
   const [editRow,        setEditRow]        = useState<EnrichedKhata | null>(null);
-  const [editRate,       setEditRate]       = useState("");
   const [editBillingDay, setEditBillingDay] = useState("");
   const [editGraceDays,  setEditGraceDays]  = useState("");
   const [editBusy,       setEditBusy]       = useState(false);
@@ -188,7 +190,7 @@ export default function KhataMasterPage() {
       ownerCache.current[owner.id] = owner;
       await apiFetch<Khata>("/khatas", {
         method: "POST",
-        body: JSON.stringify({ owner_id: owner.id, monthly_rate: 0 }),
+        body: JSON.stringify({ owner_id: owner.id }),
       });
       setFName(""); setFMobile(""); setFCompany("");
       setFOk(true); setTimeout(() => setFOk(false), 3000);
@@ -197,33 +199,11 @@ export default function KhataMasterPage() {
     finally { setFBusy(false); }
   }
 
-  async function loadBilling(khataId: string, khataTrucks: (KhataTruck & { truck_number?: string })[], billingDay: number) {
+  async function loadBilling(khataId: string) {
     setBillingData(p => ({ ...p, [khataId]: "loading" }));
     try {
-      const periodStart = getPeriodStart(billingDay);
-      const truckBills: TruckBill[] = [];
-
-      await Promise.allSettled(khataTrucks.map(async kt => {
-        const truckNumber = kt.truck_number ?? truckCache.current[kt.truck_id]?.truck_number ?? kt.truck_id.slice(0, 8).toUpperCase();
-        const sessRes = await apiFetch<{ list: SessionBill[] }>(
-          `/parking-sessions?truck_id=${kt.truck_id}&limit=100&sort_by=check_in_time&order=desc`
-        ).catch(() => ({ list: [] as SessionBill[] }));
-
-        const sessions = sessRes.list.filter(s => new Date(s.check_in_time) >= periodStart);
-
-        const totalAmount = sessions.reduce((sum, s) => {
-          if (s.total_amount !== null) return sum + s.total_amount;
-          const days = Math.max(1, Math.ceil((Date.now() - new Date(s.check_in_time).getTime()) / 86_400_000));
-          const sub = days * s.rate_per_day;
-          return sum + sub + Math.round(sub * s.gst_percent / 100 * 100) / 100;
-        }, 0);
-
-        truckBills.push({ truckNumber, sessions, totalAmount });
-      }));
-
-      truckBills.sort((a, b) => b.totalAmount - a.totalAmount);
-      const grandTotal = truckBills.reduce((s, t) => s + t.totalAmount, 0);
-      setBillingData(p => ({ ...p, [khataId]: { trucks: truckBills, grandTotal, periodLabel: getPeriodLabel(billingDay) } }));
+      const bill = await apiFetch<KhataBill>(`/khatas/${khataId}/bill`);
+      setBillingData(p => ({ ...p, [khataId]: bill }));
     } catch {
       setBillingData(p => ({ ...p, [khataId]: "error" }));
     }
@@ -292,7 +272,6 @@ export default function KhataMasterPage() {
   // ── edit drawer handlers ─────────────────────────────────────────────────────
   function openEdit(row: EnrichedKhata) {
     setEditRow(row);
-    setEditRate(String(row.khata.monthly_rate));
     setEditBillingDay(String(row.khata.billing_day));
     setEditGraceDays(String(row.khata.grace_days));
     setEditErr(""); setEditOk(false);
@@ -301,14 +280,12 @@ export default function KhataMasterPage() {
   async function handleSaveEdit(e: { preventDefault(): void }) {
     e.preventDefault();
     if (!editRow) return;
-    if (!editRate || isNaN(Number(editRate)) || Number(editRate) <= 0) { setEditErr("Monthly rate must be a positive number."); return; }
     setEditBusy(true); setEditErr(""); setEditOk(false);
     try {
       const updated = await apiFetch<Khata>(`/khatas/${editRow.khata.id}`, {
         method: "PUT",
         body: JSON.stringify({
           owner_id:    editRow.khata.owner_id,
-          monthly_rate: Number(editRate),
           billing_day:  Number(editBillingDay) || 1,
           grace_days:   Number(editGraceDays)  || 0,
           is_active:    editRow.khata.is_active,
@@ -494,17 +471,30 @@ export default function KhataMasterPage() {
             const linkVal = linkInput[khata.id] ?? "";
             const isLinkBusy = linkBusy[khata.id] ?? false;
             const linkErrMsg = linkErr[khata.id] ?? "";
+            const isDeleted = khata.is_deleted;
+            const cardCls = isDeleted
+              ? "bg-gray-50 rounded-2xl border border-gray-200 shadow-sm overflow-hidden opacity-70"
+              : "bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden";
+            const billCls = isDeleted
+              ? "mx-5 mb-3 rounded-xl border border-violet-100 bg-violet-50/50 overflow-hidden hidden"
+              : "mx-5 mb-3 rounded-xl border border-violet-100 bg-violet-50/50 overflow-hidden";
+            const nameCls = isDeleted
+              ? "font-bold text-sm truncate text-gray-400 line-through"
+              : "font-bold text-gray-900 text-sm truncate";
+            const avatarCls = isDeleted
+              ? "w-11 h-11 bg-gray-300 rounded-xl flex items-center justify-center shrink-0 shadow-sm"
+              : "w-11 h-11 " + avatarColor(name) + " rounded-xl flex items-center justify-center shrink-0 shadow-sm";
 
             return (
-              <div key={khata.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+              <div key={khata.id} className={cardCls}>
 
                 {/* owner header */}
                 <div className="flex items-start gap-3 px-5 pt-4 pb-3">
-                  <div className={`w-11 h-11 ${avatarColor(name)} rounded-xl flex items-center justify-center shrink-0 shadow-sm`}>
+                  <div className={`w-11 h-11 ${khata.is_deleted ? "bg-gray-300" : avatarColor(name)} rounded-xl flex items-center justify-center shrink-0 shadow-sm`}>
                     <span className="text-sm font-bold text-white tracking-wider">{initials(name)}</span>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-bold text-gray-900 text-sm truncate">{name}</p>
+                    <p className={`font-bold text-sm truncate ${khata.is_deleted ? "text-gray-400 line-through" : "text-gray-900"}`}>{name}</p>
                     <p className="text-xs text-gray-400 truncate">{owner?.company ?? "—"}</p>
                     <p className="text-xs text-gray-400 mt-0.5">{owner ? fmtMobile(owner.primary_mobile) : "—"}</p>
                   </div>
@@ -513,18 +503,22 @@ export default function KhataMasterPage() {
                       <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full font-mono">
                         {ref}
                       </span>
-                      <button
-                        onClick={() => openEdit(row)}
-                        className="p-1.5 text-gray-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition"
-                        title="Edit khata">
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => setDeleteConfirm(p => ({ ...p, [khata.id]: true }))}
-                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
-                        title="Delete khata">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {!khata.is_deleted && (
+                        <>
+                          <button
+                            onClick={() => openEdit(row)}
+                            className="p-1.5 text-gray-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition"
+                            title="Edit khata">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setDeleteConfirm(p => ({ ...p, [khata.id]: true }))}
+                            className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                            title="Delete khata">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                     <span className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${status.cls}`}>
                       {status.label}
@@ -533,7 +527,7 @@ export default function KhataMasterPage() {
                 </div>
 
                 {/* delete confirmation */}
-                {deleteConfirm[khata.id] && (
+                {!khata.is_deleted && deleteConfirm[khata.id] && (
                   <div className="mx-5 mb-3 flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
                     <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
                     <p className="text-xs text-red-700 font-medium flex-1">Delete this khata account? This cannot be undone.</p>
@@ -553,14 +547,14 @@ export default function KhataMasterPage() {
                 )}
 
                 {/* billing summary */}
-                <div className="mx-5 mb-3 rounded-xl border border-violet-100 bg-violet-50/50 overflow-hidden">
+                <div className={`mx-5 mb-3 rounded-xl border border-violet-100 bg-violet-50/50 overflow-hidden${khata.is_deleted ? " hidden" : ""}`}>
                   <button
                     type="button"
                     onClick={() => {
                       const next = !billingExpanded[khata.id];
                       setBillingExpanded(p => ({ ...p, [khata.id]: next }));
                       if (next && !billingData[khata.id]) {
-                        loadBilling(khata.id, khataTrucks, khata.billing_day);
+                        loadBilling(khata.id);
                       }
                     }}
                     className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-violet-50 transition"
@@ -592,36 +586,32 @@ export default function KhataMasterPage() {
                         return (
                           <>
                             <p className="text-[10px] text-violet-400 font-semibold uppercase tracking-wider">
-                              Period: {bill.periodLabel}
+                              Period: {fmtPeriodLabel(bill.period_start)}
                             </p>
                             {bill.trucks.length === 0 && (
                               <p className="text-xs text-gray-400 italic">No sessions in this billing period.</p>
                             )}
                             {bill.trucks.map(t => (
-                              <div key={t.truckNumber} className="flex items-center justify-between gap-2">
+                              <div key={t.truck_number} className="flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <Truck className="w-3 h-3 text-blue-400 shrink-0" />
-                                  <span className="text-xs font-mono font-bold text-gray-800 truncate">{t.truckNumber}</span>
+                                  <span className="text-xs font-mono font-bold text-gray-800 truncate">{t.truck_number}</span>
                                   <span className="text-[10px] text-gray-400 shrink-0">
-                                    {t.sessions.length} session{t.sessions.length !== 1 ? "s" : ""} ·{" "}
-                                    {t.sessions.reduce((d, s) => {
-                                      if (s.days) return d + s.days;
-                                      return d + Math.max(1, Math.ceil((Date.now() - new Date(s.check_in_time).getTime()) / 86_400_000));
-                                    }, 0)}d
+                                    {t.session_count} session{t.session_count !== 1 ? "s" : ""} · {t.total_days}d
                                   </span>
                                 </div>
-                                <span className="text-xs font-semibold text-gray-700 shrink-0">{fmtRupee(t.totalAmount)}</span>
+                                <span className="text-xs font-semibold text-gray-700 shrink-0">{fmtRupee(t.total_amount)}</span>
                               </div>
                             ))}
                             {bill.trucks.length > 0 && (
                               <div className="border-t border-violet-200 pt-2 flex items-center justify-between">
                                 <span className="text-xs font-bold text-violet-800">Total payable</span>
-                                <span className="text-sm font-extrabold text-violet-700">{fmtRupee(bill.grandTotal)}</span>
+                                <span className="text-sm font-extrabold text-violet-700">{fmtRupee(bill.grand_total)}</span>
                               </div>
                             )}
                             <button
                               type="button"
-                              onClick={() => loadBilling(khata.id, khataTrucks, khata.billing_day)}
+                              onClick={() => loadBilling(khata.id)}
                               className="text-[10px] text-violet-400 hover:text-violet-600 flex items-center gap-1 pt-0.5 transition"
                             >
                               <RefreshCw className="w-3 h-3" />Refresh
@@ -797,21 +787,6 @@ export default function KhataMasterPage() {
 
             {/* form */}
             <form id="edit-khata-form" onSubmit={handleSaveEdit} className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-
-              {/* monthly rate */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-                  Monthly rate <span className="text-red-400">*</span>
-                </label>
-                <div className="relative">
-                  <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
-                  <input
-                    type="number" min={1} value={editRate}
-                    onChange={e => { setEditRate(e.target.value); setEditErr(""); }}
-                    className={inputCls + " pl-8"}
-                  />
-                </div>
-              </div>
 
               {/* billing day + grace days */}
               <div className="grid grid-cols-2 gap-4">

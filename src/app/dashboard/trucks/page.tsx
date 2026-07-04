@@ -50,6 +50,7 @@ interface OwnerData    { id: string; name: string; mobile: string }
 interface LocData      { id: string; name: string; city: string | null }
 interface DivData      { id: string; name: string }
 interface SlotData     { id: string; code: string }
+interface OverdueRule  { id: string; days: number; color: string; label: string | null }
 interface Enriched extends Session {
   truckNumber: string; truckType: string;
   ownerName: string; ownerMobile: string;
@@ -74,6 +75,18 @@ function fmtDate(iso: string | null): string {
 function fmtTime(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+}
+
+// Returns the colour for the rule with the highest `days` threshold the session has exceeded.
+// Rules must be sorted ascending by `days`.
+function resolveOverdueColor(checkInTime: string, rules: OverdueRule[]): string | null {
+  if (!rules.length) return null;
+  const elapsed = Math.floor((Date.now() - new Date(checkInTime).getTime()) / 86_400_000);
+  let matched: OverdueRule | null = null;
+  for (const r of rules) {
+    if (elapsed >= r.days) matched = r;
+  }
+  return matched ? matched.color : null;
 }
 
 function statusConfig(s: Session) {
@@ -135,7 +148,8 @@ export default function AllTrucksPage() {
   const [truckSearch,   setTruckSearch]     = useState(""); // resolved truck_id or "__none__"
   const [searchLoading, setSearchLoading]   = useState(false);
 
-  const [locations, setLocations] = useState<LocData[]>([]);
+  const [locations,     setLocations]     = useState<LocData[]>([]);
+  const [overdueRules,  setOverdueRules]  = useState<OverdueRule[]>([]);
   const [receiptSession, setReceiptSession] = useState<Enriched | null>(null);
 
   // ── resizable columns ──
@@ -177,6 +191,7 @@ export default function AllTrucksPage() {
 
   useEffect(() => {
     apiFetch<{ list: LocData[] }>("/locations?limit=100&start=0").then(r => setLocations(r.list ?? [])).catch(() => {});
+    apiFetch<{ list: OverdueRule[] }>("/overdue-alert-rules").then(r => setOverdueRules(r.list ?? [])).catch(() => {});
   }, []);
 
   // Debounce truck number search → resolve to truck_id

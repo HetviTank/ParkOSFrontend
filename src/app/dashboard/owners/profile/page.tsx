@@ -4,8 +4,8 @@ import { Suspense, useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  ChevronRight, ArrowLeft, Phone, Building2, Mail, MapPin,
-  Truck, IndianRupee, Calendar, BarChart2, Clock, X,
+  ChevronRight, ArrowLeft, Phone, Mail, MapPin,
+  IndianRupee, BarChart2, Clock, X,
   Loader2, AlertCircle, CheckCircle2, Edit2, Plus, Users,
 } from "lucide-react";
 
@@ -44,7 +44,6 @@ interface Session {
 }
 interface Payment { id: string; method: string; total_amount: number | null; status: string }
 interface Division { id: string; name: string }
-
 interface EnrichedSession extends Session {
   truck_number?: string;
   division_name?: string;
@@ -95,12 +94,12 @@ function PageSkeleton() {
     <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto animate-pulse space-y-5">
       <div className="h-4 bg-gray-100 rounded-full w-48" />
       <div className="h-32 bg-gray-100 rounded-2xl" />
-      <div className="grid grid-cols-3 gap-5">
-        <div className="col-span-2 space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-3 space-y-4">
           <div className="h-48 bg-gray-100 rounded-2xl" />
           <div className="h-40 bg-gray-100 rounded-2xl" />
         </div>
-        <div className="space-y-4">
+        <div className="lg:col-span-2 space-y-4">
           <div className="h-20 bg-gray-100 rounded-2xl" />
           <div className="h-20 bg-gray-100 rounded-2xl" />
           <div className="h-48 bg-gray-100 rounded-2xl" />
@@ -115,12 +114,12 @@ function ProfileContent() {
   const params = useSearchParams();
   const ownerId = params.get("id");
 
-  const [owner,    setOwner]    = useState<Owner | null>(null);
-  const [trucks,   setTrucks]   = useState<TruckObj[]>([]);
-  const [sessions, setSessions] = useState<EnrichedSession[]>([]);
+  const [owner,     setOwner]     = useState<Owner | null>(null);
+  const [trucks,    setTrucks]    = useState<TruckObj[]>([]);
+  const [sessions,  setSessions]  = useState<EnrichedSession[]>([]);
   const [sessTotal, setSessTotal] = useState(0);
-  const [loading,  setLoading]  = useState(true);
-  const [error,    setError]    = useState("");
+  const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState("");
 
   const divCache = useRef<Record<string, Division>>({});
 
@@ -140,7 +139,9 @@ function ProfileContent() {
 
   useEffect(() => {
     if (!editOpen) return;
-    const h = (e: MouseEvent) => { if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) setEditOpen(false); };
+    const h = (e: MouseEvent) => {
+      if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) setEditOpen(false);
+    };
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, [editOpen]);
@@ -161,7 +162,6 @@ function ProfileContent() {
 
       const rawSessions = sessRes.list ?? [];
 
-      // enrich: divisions + payments in parallel per session
       const missingDivIds = [...new Set(rawSessions.map(s => s.division_id).filter(Boolean) as string[])]
         .filter(id => !divCache.current[id]);
       await Promise.allSettled(missingDivIds.map(id =>
@@ -171,22 +171,19 @@ function ProfileContent() {
       const truckMap: Record<string, string> = {};
       (truckRes.list ?? []).forEach(t => { truckMap[t.id] = t.truck_number; });
 
-      // fetch payments for each session (first 20 for display)
       const displaySessions = rawSessions.slice(0, 20);
       const payResults = await Promise.allSettled(
         displaySessions.map(s => apiFetch<{ count: number; list: Payment[] }>(`/payments?session_id=${s.id}&limit=1`))
       );
 
-      const enriched: EnrichedSession[] = rawSessions.map((s, i) => ({
+      setSessions(rawSessions.map((s, i) => ({
         ...s,
         truck_number: truckMap[s.truck_id] ?? undefined,
         division_name: s.division_id ? divCache.current[s.division_id]?.name : undefined,
         payment: i < 20 && payResults[i].status === "fulfilled"
           ? payResults[i].value.list[0] ?? undefined
           : undefined,
-      }));
-
-      setSessions(enriched);
+      })));
     } catch (e) { setError(e instanceof Error ? e.message : "Failed to load profile."); }
     finally { setLoading(false); }
   }, [ownerId]);
@@ -195,10 +192,13 @@ function ProfileContent() {
 
   function openEdit() {
     if (!owner) return;
-    setFName(owner.name); setFMobile(owner.primary_mobile.replace(/\D/g,""));
-    setFAlt(owner.alternate_mobile?.replace(/\D/g,"") ?? "");
-    setFCompany(owner.company ?? ""); setFEmail(owner.email ?? "");
-    setFGst(owner.gst_number ?? ""); setFAddress(owner.address ?? "");
+    setFName(owner.name);
+    setFMobile(owner.primary_mobile.replace(/\D/g, ""));
+    setFAlt(owner.alternate_mobile?.replace(/\D/g, "") ?? "");
+    setFCompany(owner.company ?? "");
+    setFEmail(owner.email ?? "");
+    setFGst(owner.gst_number ?? "");
+    setFAddress(owner.address ?? "");
     setFErr(""); setFOk(false); setEditOpen(true);
   }
 
@@ -222,11 +222,11 @@ function ProfileContent() {
     finally { setFBusy(false); }
   }
 
-  // ── stats ──
-  const totalSpend = sessions.reduce((s, ss) => s + (ss.total_amount ?? 0), 0);
-  const stayDays   = sessions.map(s => s.days).filter((d): d is number => d != null && d > 0);
-  const avgStay    = stayDays.length ? (stayDays.reduce((a, b) => a + b, 0) / stayDays.length) : 0;
-  const parkedNow  = sessions.filter(s => s.status === "parked");
+  // stats
+  const totalSpend  = sessions.reduce((s, ss) => s + (ss.total_amount ?? 0), 0);
+  const stayDays    = sessions.map(s => s.days).filter((d): d is number => d != null && d > 0);
+  const avgStay     = stayDays.length ? stayDays.reduce((a, b) => a + b, 0) / stayDays.length : 0;
+  const parkedNow   = sessions.filter(s => s.status === "parked");
   const outstanding = parkedNow.reduce((s, ss) => s + (ss.subtotal ?? ss.total_amount ?? 0), 0);
 
   if (!ownerId) {
@@ -260,13 +260,10 @@ function ProfileContent() {
 
   if (!owner) return null;
 
-  const isActive = owner.is_active;
-  const sinceTxt = `Owner since ${fmtMonthYear(owner.created_at)}`;
-
   return (
     <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto space-y-5">
 
-      {/* breadcrumb + actions */}
+      {/* breadcrumb + edit */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link href="/dashboard/owners"
@@ -278,7 +275,7 @@ function ProfileContent() {
             <ChevronRight className="w-3 h-3" />
             <Link href="/dashboard/owners" className="hover:text-blue-600 transition">Owners</Link>
             <ChevronRight className="w-3 h-3" />
-            <span className="text-gray-600 font-medium">Owner profile</span>
+            <span className="text-gray-600 font-medium truncate max-w-[160px]">{owner.name}</span>
           </div>
         </div>
         <button onClick={openEdit}
@@ -296,11 +293,11 @@ function ProfileContent() {
           <div className="flex-1 min-w-0">
             <h2 className="text-xl font-bold text-gray-900 leading-tight">{owner.name}</h2>
             <p className="text-sm text-gray-400 mt-0.5">
-              {owner.company ? `${owner.company} · ` : ""}{sinceTxt}
+              {owner.company ? `${owner.company} · ` : ""}Owner since {fmtMonthYear(owner.created_at)}
             </p>
             <div className="flex flex-wrap items-center gap-2 mt-2.5">
-              <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${isActive ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-gray-100 text-gray-500 border-gray-200"}`}>
-                {isActive ? "Active" : "Inactive"}
+              <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${owner.is_active ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-gray-100 text-gray-500 border-gray-200"}`}>
+                {owner.is_active ? "Active" : "Inactive"}
               </span>
               <span className="text-xs font-semibold px-2.5 py-1 rounded-full border bg-blue-50 text-blue-700 border-blue-100">
                 {sessTotal} visits
@@ -376,8 +373,7 @@ function ProfileContent() {
                   const lastOut = sessions.find(s => s.truck_id === t.id && s.check_out_time);
                   const isParked = !!currentSess;
                   return (
-                    <div key={t.id}
-                      className={`flex items-center gap-3 px-5 py-3.5 ${isParked ? "bg-amber-50/50" : ""}`}>
+                    <div key={t.id} className={`flex items-center gap-3 px-5 py-3.5 ${isParked ? "bg-amber-50/50" : ""}`}>
                       <div className="flex-1 min-w-0">
                         <Link href={`/dashboard/trucks/profile?q=${encodeURIComponent(t.truck_number)}`}
                           className="font-bold text-blue-600 hover:underline text-sm font-mono">
@@ -385,7 +381,7 @@ function ProfileContent() {
                         </Link>
                         <span className="text-gray-300 mx-2">·</span>
                         <span className="text-sm text-gray-400">
-                          {t.truck_type ? (t.truck_type.charAt(0).toUpperCase() + t.truck_type.slice(1)) : "Unknown"}
+                          {t.truck_type ? t.truck_type.charAt(0).toUpperCase() + t.truck_type.slice(1) : "Unknown"}
                         </span>
                         <span className="text-gray-300 mx-2">·</span>
                         <span className="text-xs text-gray-400">
@@ -406,33 +402,11 @@ function ProfileContent() {
         {/* ── right: stats + history ── */}
         <div className="lg:col-span-2 space-y-4">
 
-          {/* 2×2 stats */}
           <div className="grid grid-cols-2 gap-3">
-            <StatCard
-              label="Total visits" value={String(sessTotal)}
-              sub={`Since ${fmtMonthYear(owner.created_at)}`}
-              subCls="text-blue-500" bg="bg-blue-50/60 border-blue-100"
-              icon={<BarChart2 className="w-4 h-4 text-blue-400" />}
-            />
-            <StatCard
-              label="Total spend" value={fmtRupees(totalSpend)}
-              sub="Lifetime" subCls="text-emerald-500"
-              bg="bg-emerald-50/60 border-emerald-100"
-              icon={<IndianRupee className="w-4 h-4 text-emerald-400" />}
-            />
-            <StatCard
-              label="Avg. stay" value={avgStay > 0 ? `${avgStay.toFixed(1)} days` : "—"}
-              sub="Per visit" subCls="text-amber-500"
-              bg="bg-amber-50/60 border-amber-100"
-              icon={<Clock className="w-4 h-4 text-amber-400" />}
-            />
-            <StatCard
-              label="Outstanding" value={fmtRupees(outstanding)}
-              sub={outstanding === 0 ? "All paid" : `${parkedNow.length} inside`}
-              subCls={outstanding === 0 ? "text-emerald-500" : "text-red-500"}
-              bg={outstanding === 0 ? "bg-emerald-50/60 border-emerald-100" : "bg-red-50/60 border-red-100"}
-              icon={<IndianRupee className={`w-4 h-4 ${outstanding === 0 ? "text-emerald-400" : "text-red-400"}`} />}
-            />
+            <StatCard label="Total visits" value={String(sessTotal)} sub={`Since ${fmtMonthYear(owner.created_at)}`} subCls="text-blue-500" bg="bg-blue-50/60 border-blue-100" icon={<BarChart2 className="w-4 h-4 text-blue-400" />} />
+            <StatCard label="Total spend" value={fmtRupees(totalSpend)} sub="Lifetime" subCls="text-emerald-500" bg="bg-emerald-50/60 border-emerald-100" icon={<IndianRupee className="w-4 h-4 text-emerald-400" />} />
+            <StatCard label="Avg. stay" value={avgStay > 0 ? `${avgStay.toFixed(1)} days` : "—"} sub="Per visit" subCls="text-amber-500" bg="bg-amber-50/60 border-amber-100" icon={<Clock className="w-4 h-4 text-amber-400" />} />
+            <StatCard label="Outstanding" value={fmtRupees(outstanding)} sub={outstanding === 0 ? "All paid" : `${parkedNow.length} inside`} subCls={outstanding === 0 ? "text-emerald-500" : "text-red-500"} bg={outstanding === 0 ? "bg-emerald-50/60 border-emerald-100" : "bg-red-50/60 border-red-100"} icon={<IndianRupee className={`w-4 h-4 ${outstanding === 0 ? "text-emerald-400" : "text-red-400"}`} />} />
           </div>
 
           {/* visit history */}
@@ -445,25 +419,22 @@ function ProfileContent() {
             ) : (
               <div className="divide-y divide-gray-50 max-h-[420px] overflow-y-auto">
                 {sessions.slice(0, 20).map(s => {
-                  const range = fmtRange(s.check_in_time, s.check_out_time);
                   const isParked = s.status === "parked";
                   const pay = s.payment;
                   const payLine = pay
                     ? `${fmtRupees(pay.total_amount ?? 0)} ${methodLabel(pay.method)}`
                     : isParked ? "Still parked" : "—";
-
                   const badge = isParked
                     ? { label: "Parked", cls: "bg-amber-100 text-amber-700 border-amber-200" }
                     : pay
                     ? { label: "Paid",   cls: "bg-emerald-100 text-emerald-700 border-emerald-200" }
                     : { label: "Done",   cls: "bg-gray-100 text-gray-500 border-gray-200" };
-
                   return (
                     <div key={s.id} className={`px-5 py-3 flex items-start gap-3 ${isParked ? "bg-amber-50/40" : ""}`}>
                       <div className="w-1.5 h-1.5 rounded-full mt-2 shrink-0 bg-gray-300" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-bold text-gray-800 leading-tight">
-                          {s.truck_number ?? "—"} · {range}
+                          {s.truck_number ?? "—"} · {fmtRange(s.check_in_time, s.check_out_time)}
                         </p>
                         <p className="text-xs text-gray-400 mt-0.5">
                           {s.division_name ? `${s.division_name} · ` : ""}
@@ -507,12 +478,12 @@ function ProfileContent() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1.5">Primary mobile <span className="text-red-400">*</span></label>
-                  <input value={fMobile} onChange={e => { setFMobile(e.target.value.replace(/\D/g,"").slice(0,10)); setFErr(""); }}
+                  <input value={fMobile} onChange={e => { setFMobile(e.target.value.replace(/\D/g, "").slice(0, 10)); setFErr(""); }}
                     placeholder="10 digits" maxLength={10} className={inputCls} />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1.5">Alternate mobile</label>
-                  <input value={fAlt} onChange={e => setFAlt(e.target.value.replace(/\D/g,"").slice(0,10))}
+                  <input value={fAlt} onChange={e => setFAlt(e.target.value.replace(/\D/g, "").slice(0, 10))}
                     placeholder="Optional" maxLength={10} className={inputCls} />
                 </div>
               </div>
@@ -552,7 +523,7 @@ function ProfileContent() {
               </button>
               <button type="submit" form="edit-form" disabled={fBusy}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 rounded-xl shadow-sm shadow-blue-200 transition">
-                {fBusy ? <><Loader2 className="w-4 h-4 animate-spin" />Saving…</> : <>Save changes</>}
+                {fBusy ? <><Loader2 className="w-4 h-4 animate-spin" />Saving…</> : <><Plus className="w-4 h-4" />Save changes</>}
               </button>
             </div>
           </div>

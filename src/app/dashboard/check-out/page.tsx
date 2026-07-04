@@ -9,7 +9,7 @@ import {
   Truck as TruckIcon, User, Clock, Search, Check,
   AlertCircle, Loader2, CheckCircle2, ChevronRight,
   IndianRupee, MapPin, Calendar, ShieldCheck, ShieldAlert, ShieldX,
-  Banknote, CreditCard, Smartphone, Receipt,
+  Banknote, CreditCard, Smartphone, Receipt, BookOpen,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -48,6 +48,12 @@ interface SessionItem {
   driver_match: string | null; override_by: string | null;
   days: number | null; subtotal: number | null;
   gst_amount: number | null; total_amount: number | null;
+}
+
+interface TruckKhataBill {
+  truck_id: string; truck_number: string; khata_id: string;
+  billing_day: number; period_start: string;
+  session_count: number; total_days: number; total_amount: number;
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -111,6 +117,10 @@ export default function CheckOutPage() {
   const [amtReceived,    setAmtReceived]    = useState("");
   const [coRemarks,      setCoRemarks]      = useState("");
 
+  // khata bill
+  const [khataBill,        setKhataBill]        = useState<TruckKhataBill | null>(null);
+  const [khataBillLoading, setKhataBillLoading] = useState(false);
+
   // submit
   const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -163,6 +173,7 @@ export default function CheckOutPage() {
     if (!q) return;
     setSearchError(""); setSearching(true);
     setSession(null); setTruck(null); setOwner(null); setDivision(null); setSlot(null); setLocation(null);
+    setKhataBill(null); setKhataBillLoading(false);
     setDriverMatch(null); setCoDriverName(""); setCoDriverMobile("+91"); setSubmitError("");
     try {
       // ── blacklist check ───────────────────────────────────────────────────
@@ -192,6 +203,15 @@ export default function CheckOutPage() {
       }
       const s = sessRes.list[0];
       setSession(s);
+
+      // For khata trucks, load their account bill
+      if (s.entry_type === "khata") {
+        setKhataBillLoading(true);
+        apiFetch<TruckKhataBill>(`/khata-trucks/truck-bill?truck_id=${t.id}`)
+          .then(setKhataBill)
+          .catch(() => setKhataBill(null))
+          .finally(() => setKhataBillLoading(false));
+      }
 
       // If admin already approved the override on verification page, auto-verify
       if (s.driver_match === "override") {
@@ -298,6 +318,14 @@ export default function CheckOutPage() {
           paid_at:         nowISO,
         }),
       });
+
+      // Refresh khata bill amounts after checkout (silent — server also does this)
+      if (session.entry_type === "khata") {
+        apiFetch<TruckKhataBill>(
+          `/khata-trucks/truck-bill?truck_id=${session.truck_id}`,
+          { method: "PUT" }
+        ).then(setKhataBill).catch(() => {});
+      }
 
       setDone({ sessionId: session.id, total: finalTotal });
       setTimeout(() => { router.push("/dashboard/trucks"); }, 2500);
@@ -772,6 +800,43 @@ export default function CheckOutPage() {
                 {durationLabel(session.check_in_time)} parked → {days} billing day{days !== 1 ? "s" : ""}
               </p>
             </FormCard>
+
+            {/* Khata account bill — only for khata entry type */}
+            {session.entry_type === "khata" && (
+              <FormCard icon={<BookOpen className="w-4 h-4 text-violet-600" />} title="Khata account bill">
+                {khataBillLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-400 py-1">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading khata bill…
+                  </div>
+                ) : khataBill ? (
+                  <div className="space-y-2.5">
+                    <BillRow
+                      label="Period from"
+                      value={new Date(khataBill.period_start).toLocaleDateString("en-IN", {
+                        day: "2-digit", month: "short", year: "numeric",
+                      })}
+                    />
+                    <BillRow label="Sessions this period" value={String(khataBill.session_count)} />
+                    <BillRow
+                      label="Total billing days"
+                      value={`${khataBill.total_days} day${khataBill.total_days !== 1 ? "s" : ""}`}
+                    />
+                    <div className="border-t-2 border-violet-100 pt-3">
+                      <div className="flex items-center justify-between bg-violet-50 border border-violet-200 rounded-xl px-4 py-3">
+                        <span className="font-bold text-violet-900">Period total</span>
+                        <span className="text-lg font-bold text-violet-700">{fmt(khataBill.total_amount)}</span>
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-400 flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      Billing cycle resets on day {khataBill.billing_day} of each month
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-400">No khata billing data available.</p>
+                )}
+              </FormCard>
+            )}
 
             {/* Payment */}
             <FormCard icon={<Banknote className="w-4 h-4 text-emerald-600" />} title="Payment collection">

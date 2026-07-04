@@ -37,10 +37,7 @@ const NAV: NavGroup[] = [
       },
       { label: "Blacklist",    href: "/dashboard/blacklist", icon: Ban,      badge: 0, badgeColor: "red"  },
       { label: "Khata Master", href: "/dashboard/khata",     icon: BookOpen, badge: 0, badgeColor: "blue" },
-      {
-        label: "Owners", href: "/dashboard/owners", icon: Users,
-        children: [{ label: "Owner Profile", href: "/dashboard/owners/profile" }],
-      },
+      { label: "Owners", href: "/dashboard/owners", icon: Users },
       { label: "Notices", href: "/dashboard/notices", icon: Bell, badge: 0, badgeColor: "red" },
     ],
   },
@@ -57,9 +54,9 @@ const NAV: NavGroup[] = [
   {
     section: "SETUP",
     items: [
-      { label: "Locations",         href: "/dashboard/locations",  icon: MapPin   },
-      { label: "Divisions & Rates", href: "/dashboard/divisions",  icon: Layers   },
-      { label: "Settings",          href: "/dashboard/settings",   icon: Settings },
+      { label: "Locations",         href: "/dashboard/locations",  icon: MapPin     },
+      { label: "Divisions & Rates", href: "/dashboard/divisions",  icon: Layers     },
+      { label: "Settings",          href: "/dashboard/settings",   icon: Settings   },
     ],
   },
   {
