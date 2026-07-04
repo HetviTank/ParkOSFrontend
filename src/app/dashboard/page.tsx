@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  TrendingUp, TrendingDown, AlertTriangle, Bell,
-  Layers, BarChart2, Activity, CreditCard,
+  TrendingUp, TrendingDown, AlertTriangle, Clock,
+  Layers, BarChart2, Activity, CreditCard, Loader2,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -12,10 +12,22 @@ import {
 } from "recharts";
 import type {
   DashboardResponse, DivisionOccupancyItem, SlotMapDivision,
-  LiveAlertItem, WeeklyRevenueItem, PaymentSplit,
+  WeeklyRevenueItem, PaymentSplit,
 } from "@/types/dashboard";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+
+// ── types ─────────────────────────────────────────────────────────────────────
+interface OverdueRule { id: string; days: number; color: string; label: string | null }
+
+interface SessionRaw {
+  id: string; truck_id: string; owner_id: string;
+  check_in_time: string; status: string; entry_type: string;
+}
+interface EnrichedOverdue {
+  sessionId: string; truckNumber: string; ownerName: string; ownerMobile: string;
+  checkInTime: string; daysParked: number; rule: OverdueRule; entryType: string;
+}
 
 // ── formatters ────────────────────────────────────────────────────────────────
 const fmt = (n: number) =>
@@ -47,17 +59,6 @@ const SLOT_STYLE: Record<string, { bg: string; border: string; text: string }> =
   reserved: { bg: "bg-amber-50",    border: "border-amber-300",   text: "text-amber-700"   },
 };
 
-function alertStyle(type: string) {
-  const t = type.toLowerCase();
-  if (t.includes("mismatch") || t.includes("driver"))
-    return { bg: "bg-rose-50",  borderL: "border-l-rose-400",  badge: "bg-rose-100 text-rose-700",   icon: "text-rose-400"  };
-  if (t.includes("overdue"))
-    return { bg: "bg-amber-50", borderL: "border-l-amber-400", badge: "bg-amber-100 text-amber-700", icon: "text-amber-400" };
-  if (t.includes("reminder"))
-    return { bg: "bg-sky-50",   borderL: "border-l-sky-400",   badge: "bg-sky-100 text-sky-700",     icon: "text-sky-400"   };
-  return   { bg: "bg-gray-50",  borderL: "border-l-gray-300",  badge: "bg-gray-100 text-gray-600",   icon: "text-gray-400"  };
-}
-
 const CHART = { cash: "#3b82f6", card: "#10b981" };
 
 // ── main page ────────────────────────────────────────────────────────────────
@@ -70,6 +71,9 @@ export default function DashboardPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [clock, setClock] = useState(clockNow());
   const [mounted, setMounted] = useState(false);
+  const [overdueRules, setOverdueRules] = useState<OverdueRule[]>([]);
+  const [overdueTrucks, setOverdueTrucks] = useState<EnrichedOverdue[]>([]);
+  const [overdueLoading, setOverdueLoading] = useState(false);
 
   // mount flag for recharts SSR guard
   useEffect(() => {
@@ -97,17 +101,64 @@ export default function DashboardPage() {
     }
   }, [router]);
 
+  const fetchOverdueTrucks = useCallback(async () => {
+    const token = localStorage.getItem("token") ?? "";
+    if (!token) return;
+    setOverdueLoading(true);
+    try {
+      const [rulesRes, parkedRes, overdueRes] = await Promise.all([
+        fetch(`${BASE_URL}/overdue-alert-rules`, { headers: { token } }).then(r => r.ok ? r.json() : { list: [] }).catch(() => ({ list: [] })),
+        fetch(`${BASE_URL}/parking-sessions?status=parked&start=0&limit=50&sort_by=check_in_time&order=asc`, { headers: { token } }).then(r => r.ok ? r.json() : { list: [] }).catch(() => ({ list: [] })),
+        fetch(`${BASE_URL}/parking-sessions?status=overdue&start=0&limit=50&sort_by=check_in_time&order=asc`, { headers: { token } }).then(r => r.ok ? r.json() : { list: [] }).catch(() => ({ list: [] })),
+      ]);
+      const rules: OverdueRule[] = (rulesRes.list ?? []).sort((a: OverdueRule, b: OverdueRule) => b.days - a.days);
+      setOverdueRules(rules);
+      if (!rules.length) { setOverdueTrucks([]); return; }
+      const sessions: SessionRaw[] = [...(parkedRes.list ?? []), ...(overdueRes.list ?? [])];
+      const now = Date.now();
+      const minDays = Math.min(...rules.map((r: OverdueRule) => r.days));
+      const qualifying = sessions
+        .map(s => ({ ...s, daysParked: Math.floor((now - new Date(s.check_in_time).getTime()) / 86_400_000) }))
+        .filter(s => s.daysParked >= minDays)
+        .sort((a, b) => b.daysParked - a.daysParked)
+        .slice(0, 15);
+      if (!qualifying.length) { setOverdueTrucks([]); return; }
+      const enriched = await Promise.all(qualifying.map(async s => {
+        const [truck, owner] = await Promise.all([
+          fetch(`${BASE_URL}/trucks/${s.truck_id}`, { headers: { token } }).then(r => r.ok ? r.json() : null).catch(() => null),
+          s.owner_id ? fetch(`${BASE_URL}/owners/${s.owner_id}`, { headers: { token } }).then(r => r.ok ? r.json() : null).catch(() => null) : Promise.resolve(null),
+        ]);
+        const rule = rules.find((r: OverdueRule) => s.daysParked >= r.days);
+        if (!rule) return null;
+        return {
+          sessionId: s.id,
+          truckNumber: truck?.truck_number ?? "—",
+          ownerName: owner?.name ?? "—",
+          ownerMobile: owner?.mobile ?? owner?.primary_mobile ?? "",
+          checkInTime: s.check_in_time,
+          daysParked: s.daysParked,
+          rule,
+          entryType: s.entry_type,
+        } as EnrichedOverdue;
+      }));
+      setOverdueTrucks(enriched.filter((x): x is EnrichedOverdue => x !== null));
+    } finally {
+      setOverdueLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const stored = localStorage.getItem("user");
     if (stored) setUser(JSON.parse(stored));
     fetchData();
-  }, [fetchData]);
+    fetchOverdueTrucks();
+  }, [fetchData, fetchOverdueTrucks]);
 
   // auto-refresh every 30 s
   useEffect(() => {
-    const id = setInterval(() => fetchData(true), 30_000);
+    const id = setInterval(() => { fetchData(true); fetchOverdueTrucks(); }, 30_000);
     return () => clearInterval(id);
-  }, [fetchData]);
+  }, [fetchData, fetchOverdueTrucks]);
 
   return (
     <main className="px-4 sm:px-6 py-6 space-y-5 max-w-screen-2xl mx-auto">
@@ -195,7 +246,7 @@ export default function DashboardPage() {
               </div>
               <div className="xl:col-span-2 flex flex-col gap-4">
                 <DivisionOccupancyCard items={data.division_occupancy} />
-                <LiveAlertsCard alerts={data.live_alerts} />
+                <OverdueTrucksCard trucks={overdueTrucks} loading={overdueLoading} rulesConfigured={overdueRules.length > 0} />
               </div>
             </div>
 
@@ -243,8 +294,8 @@ function KPICard({
 // ── Slot Map ──────────────────────────────────────────────────────────────────
 function SlotMapCard({ divisions }: { divisions: SlotMapDivision[] }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 h-full">
-      <div className="flex items-center justify-between mb-4">
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col max-h-[520px]">
+      <div className="flex items-center justify-between mb-4 shrink-0">
         <h2 className="font-semibold text-gray-900">Live Slot Map</h2>
         <div className="flex items-center gap-3 text-xs text-gray-500">
           {(["free", "occupied", "reserved"] as const).map((s) => (
@@ -256,7 +307,7 @@ function SlotMapCard({ divisions }: { divisions: SlotMapDivision[] }) {
         </div>
       </div>
 
-      <div className="space-y-5 overflow-y-auto max-h-[420px] pr-1">
+      <div className="space-y-5 overflow-y-auto flex-1 min-h-0 pr-1">
         {divisions.map((div) => (
           <div key={div.division_id}>
             <p className="text-[11px] font-bold text-blue-600 uppercase tracking-widest mb-2">
@@ -327,57 +378,91 @@ function DivisionOccupancyCard({ items }: { items: DivisionOccupancyItem[] }) {
   );
 }
 
-// ── Live Alerts ───────────────────────────────────────────────────────────────
-function LiveAlertsCard({ alerts }: { alerts: LiveAlertItem[] }) {
+// ── Overdue Trucks ────────────────────────────────────────────────────────────
+function OverdueTrucksCard({ trucks, loading, rulesConfigured }: {
+  trucks: EnrichedOverdue[];
+  loading: boolean;
+  rulesConfigured: boolean;
+}) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex-1">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="font-semibold text-gray-900">Live Alerts</h2>
-        {alerts.length > 0 && (
+        <h2 className="font-semibold text-gray-900">Overdue Trucks</h2>
+        {trucks.length > 0 && (
           <span className="bg-rose-100 text-rose-600 text-xs font-bold px-2.5 py-1 rounded-full">
-            {alerts.length} active
+            {trucks.length} overdue
           </span>
         )}
       </div>
-      <div className="space-y-2.5 overflow-y-auto max-h-48">
-        {alerts.map((alert) => {
-          const s = alertStyle(alert.notice_type);
-          const label = alert.notice_type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-          return (
-            <div key={alert.id} className={`${s.bg} border-l-4 ${s.borderL} rounded-r-xl pl-3 pr-3.5 py-3`}>
-              <div className="flex items-start gap-2.5">
-                <AlertTriangle className={`w-4 h-4 mt-0.5 shrink-0 ${s.icon}`} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${s.badge}`}>{label}</span>
-                    {alert.truck_number && (
-                      <span className="text-xs font-mono font-semibold text-gray-700">{alert.truck_number}</span>
-                    )}
-                    {alert.is_system && (
-                      <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">System</span>
-                    )}
-                  </div>
-                  {alert.message && (
-                    <p className="text-sm text-gray-700 truncate">{alert.message}</p>
-                  )}
-                  {alert.owner_name && (
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {alert.owner_name}
-                      {alert.owner_mobile && <> · {alert.owner_mobile}</>}
+
+      {loading && (
+        <div className="flex items-center justify-center py-8 gap-2 text-gray-400">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-sm">Checking parked trucks…</span>
+        </div>
+      )}
+
+      {!loading && !rulesConfigured && (
+        <div className="text-center py-8">
+          <AlertTriangle className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+          <p className="text-sm text-gray-400">No overdue rules configured.</p>
+          <p className="text-xs text-gray-300 mt-1">Set thresholds in Settings to see overdue trucks here.</p>
+        </div>
+      )}
+
+      {!loading && rulesConfigured && trucks.length === 0 && (
+        <div className="text-center py-8">
+          <Clock className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+          <p className="text-sm text-gray-400">No overdue trucks right now</p>
+        </div>
+      )}
+
+      {!loading && trucks.length > 0 && (
+        <div className="space-y-2.5 overflow-y-auto max-h-56">
+          {trucks.map((t) => {
+            const hex = t.rule.color;
+            return (
+              <div
+                key={t.sessionId}
+                className="border-l-4 rounded-r-xl pl-3 pr-3.5 py-2.5"
+                style={{ backgroundColor: hex + "14", borderLeftColor: hex }}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-bold font-mono text-gray-900">{t.truckNumber}</span>
+                      <span
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: hex + "28", color: hex }}
+                      >
+                        {t.daysParked}d parked
+                      </span>
+                      {t.rule.label && (
+                        <span
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                          style={{ backgroundColor: hex + "18", color: hex }}
+                        >
+                          {t.rule.label}
+                        </span>
+                      )}
+                      <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full uppercase">
+                        {t.entryType}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5 truncate">
+                      {t.ownerName}
+                      {t.ownerMobile ? ` · ${t.ownerMobile}` : ""}
                     </p>
-                  )}
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      In: {new Date(t.checkInTime).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
-        {alerts.length === 0 && (
-          <div className="text-center py-8">
-            <Bell className="w-8 h-8 text-gray-200 mx-auto mb-2" />
-            <p className="text-sm text-gray-400">No active alerts</p>
-          </div>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
