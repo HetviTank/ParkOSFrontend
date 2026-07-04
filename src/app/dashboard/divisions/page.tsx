@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   ChevronRight, ChevronDown, Plus, X, Loader2, AlertCircle,
-  CheckCircle2, Layers, Save, Truck, ZapOff, Percent, IndianRupee,
+  CheckCircle2, Layers, Save, Truck, Zap, Percent, IndianRupee,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -45,7 +45,7 @@ interface DivOcc {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-function locId(d: Division): string {
+function divLocId(d: Division): string {
   return typeof d.location === "string" ? d.location : (d.location as LocationRef).id;
 }
 
@@ -95,6 +95,14 @@ export default function DivisionsPage() {
   const [saved,   setSaved]   = useState<Record<string, boolean>>({});
   const [saveErr, setSaveErr] = useState<Record<string, string>>({});
 
+  // per-division slot generation state
+  const [slotCounts, setSlotCounts] = useState<Record<string, number>>({});
+  const [generating, setGenerating] = useState<Record<string, boolean>>({});
+  const [genErr,     setGenErr]     = useState<Record<string, string>>({});
+  const [genOk,      setGenOk]      = useState<Record<string, boolean>>({});
+  const [slotPanels, setSlotPanels] = useState<Record<string, boolean>>({});
+  const [slotInputs, setSlotInputs] = useState<Record<string, string[]>>({});
+
   // add-division form
   const [addOpen,   setAddOpen]   = useState(false);
   const [newName,   setNewName]   = useState("");
@@ -140,6 +148,15 @@ export default function DivisionsPage() {
       });
       setEdits(e);
       setSaving({}); setSaved({}); setSaveErr({});
+      // load actual slot record counts for each division
+      const counts: Record<string, number> = {};
+      await Promise.all(divs.map(async (d) => {
+        try {
+          const sr = await apiFetch<{ count: number }>(`/slots?division_id=${d.id}&limit=1`);
+          counts[d.id] = sr.count ?? 0;
+        } catch { counts[d.id] = 0; }
+      }));
+      setSlotCounts(counts);
     } catch (err) { setError(err instanceof Error ? err.message : "Failed to load."); }
     finally { setLoading(false); }
   }, []);
@@ -177,6 +194,59 @@ export default function DivisionsPage() {
     finally { setSaving(p => ({ ...p, [div.id]: false })); }
   }
 
+  function openSlotPanel(div: Division, letter: string) {
+    const total    = Number(edits[div.id]?.slots ?? div.total_slots);
+    const existing = slotCounts[div.id] ?? 0;
+    const need     = total - existing;
+    if (need <= 0) return;
+    const codes = Array.from({ length: need }, (_, i) =>
+      `${letter}-${String(existing + i + 1).padStart(2, "0")}`
+    );
+    setSlotInputs(p => ({ ...p, [div.id]: codes }));
+    setSlotPanels(p => ({ ...p, [div.id]: true }));
+    setGenErr(p => ({ ...p, [div.id]: "" }));
+  }
+
+  function updateSlotInput(divId: string, idx: number, val: string) {
+    setSlotInputs(p => {
+      const arr = [...(p[divId] ?? [])];
+      arr[idx] = val;
+      return { ...p, [divId]: arr };
+    });
+  }
+
+  async function generateSlots(div: Division) {
+    const codes    = slotInputs[div.id] ?? [];
+    const existing = slotCounts[div.id] ?? 0;
+    if (!codes.length) return;
+    setGenerating(p => ({ ...p, [div.id]: true }));
+    setGenErr(p => ({ ...p, [div.id]: "" }));
+    setGenOk(p => ({ ...p, [div.id]: false }));
+    try {
+      await Promise.all(
+        codes.map((code) =>
+          apiFetch<unknown>("/slots", {
+            method: "POST",
+            body: JSON.stringify({
+              division_id: div.id,
+              location_id: divLocId(div),
+              code: code.trim() || `SLOT-${existing + codes.indexOf(code) + 1}`,
+              status: "free",
+            }),
+          })
+        )
+      );
+      setSlotCounts(p => ({ ...p, [div.id]: existing + codes.length }));
+      setSlotPanels(p => ({ ...p, [div.id]: false }));
+      setGenOk(p => ({ ...p, [div.id]: true }));
+      setTimeout(() => setGenOk(p => ({ ...p, [div.id]: false })), 2500);
+    } catch (err) {
+      setGenErr(p => ({ ...p, [div.id]: err instanceof Error ? err.message : "Failed to create slots." }));
+    } finally {
+      setGenerating(p => ({ ...p, [div.id]: false }));
+    }
+  }
+
   async function handleAdd(e: { preventDefault(): void }) {
     e.preventDefault();
     if (!newName.trim()) { setNewErr("Division name required."); return; }
@@ -184,7 +254,7 @@ export default function DivisionsPage() {
     if (!newRate  || isNaN(Number(newRate)))  { setNewErr("Valid rate required."); return; }
     setNewBusy(true); setNewErr(""); setNewOk(false);
     try {
-      await apiFetch<Division>("/divisions", {
+      const created = await apiFetch<Division>("/divisions", {
         method: "POST",
         body: JSON.stringify({
           name: newName.trim(), location_id: selLoc, truck_type: newType,
@@ -192,6 +262,21 @@ export default function DivisionsPage() {
           gst_percent: Number(newGst) || 18, status: newStatus,
         }),
       });
+      // auto-create slot records so check-in can assign them
+      const letter = ALPHA[divisions.length] ?? "A";
+      await Promise.all(
+        Array.from({ length: Number(newSlots) }, (_, i) =>
+          apiFetch<unknown>("/slots", {
+            method: "POST",
+            body: JSON.stringify({
+              division_id: created.id,
+              location_id: selLoc,
+              code: `${letter}-${String(i + 1).padStart(2, "0")}`,
+              status: "free",
+            }),
+          })
+        )
+      ).catch(() => {});
       setNewOk(true); setNewName(""); setNewType("heavy"); setNewSlots(""); setNewRate(""); setNewGst("18"); setNewStatus("active");
       setTimeout(() => { setAddOpen(false); setNewOk(false); loadDivisions(selLoc); }, 1200);
     } catch (err) { setNewErr(err instanceof Error ? err.message : "Failed."); }
@@ -378,9 +463,59 @@ export default function DivisionsPage() {
                     </div>
                   </div>
 
+                  {/* slot generation panel */}
+                  {slotPanels[div.id] && (
+                    <div className="bg-white/80 rounded-2xl border border-gray-200 shadow-sm p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-xs font-black text-gray-700 uppercase tracking-wide">
+                            Slot codes — {slotInputs[div.id]?.length ?? 0} new slots
+                          </p>
+                          <p className="text-[11px] text-gray-400 mt-0.5">Edit any code before creating</p>
+                        </div>
+                        <button
+                          onClick={() => setSlotPanels(p => ({ ...p, [div.id]: false }))}
+                          className="p-1.5 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                        {(slotInputs[div.id] ?? []).map((code, i) => {
+                          const slotNum = (slotCounts[div.id] ?? 0) + i + 1;
+                          return (
+                            <div key={i} className="bg-gray-50 rounded-xl border border-gray-200 px-3 py-2.5">
+                              <p className="text-[10px] font-bold text-gray-400 mb-1.5">#{slotNum}</p>
+                              <input
+                                value={code}
+                                onChange={ev => updateSlotInput(div.id, i, ev.target.value)}
+                                className="w-full text-xs font-bold text-gray-900 bg-transparent border-0 p-0 focus:outline-none placeholder-gray-300"
+                                placeholder={`${letter}-${String(slotNum).padStart(2, "0")}`}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {genErr[div.id] && (
+                        <div className="flex items-center gap-1.5 text-xs text-red-600">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />{genErr[div.id]}
+                        </div>
+                      )}
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => generateSlots(div)}
+                          disabled={!!generating[div.id]}
+                          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold text-sm px-5 py-2.5 rounded-xl shadow-sm shadow-blue-200 transition">
+                          {generating[div.id]
+                            ? <><Loader2 className="w-4 h-4 animate-spin" />Creating slots…</>
+                            : <><Zap className="w-4 h-4" />Create {slotInputs[div.id]?.length ?? 0} slots</>}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* feedback row */}
                   <div className="flex items-center justify-between flex-wrap gap-3">
-                    <div className="flex-1">
+                    <div className="flex-1 min-w-0 space-y-1">
                       {errMsg && (
                         <div className="flex items-center gap-1.5 text-xs text-red-600">
                           <AlertCircle className="w-3.5 h-3.5 shrink-0" />{errMsg}
@@ -391,15 +526,41 @@ export default function DivisionsPage() {
                           <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />Changes saved!
                         </div>
                       )}
+                      {genOk[div.id] && (
+                        <div className="flex items-center gap-1.5 text-xs text-emerald-600 font-semibold">
+                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />Slots created successfully!
+                        </div>
+                      )}
                     </div>
-                    <button
-                      onClick={() => handleSave(div)}
-                      disabled={!!isSaving}
-                      className="flex items-center gap-2 bg-white hover:bg-gray-50 disabled:bg-gray-50 text-gray-800 font-bold text-sm px-4 py-2.5 rounded-xl border border-gray-200 shadow-sm transition">
-                      {isSaving
-                        ? <><Loader2 className="w-4 h-4 animate-spin text-gray-400" />Saving…</>
-                        : <><Save className="w-4 h-4 text-gray-500" />Save changes</>}
-                    </button>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* slot sync button */}
+                      {(() => {
+                        const sc   = slotCounts[div.id] ?? 0;
+                        const need = total - sc;
+                        if (need <= 0) return (
+                          <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl">
+                            <CheckCircle2 className="w-3.5 h-3.5" />{sc} slots ready
+                          </span>
+                        );
+                        return (
+                          <button
+                            onClick={() => openSlotPanel(div, letter)}
+                            disabled={!!slotPanels[div.id]}
+                            className="flex items-center gap-1.5 text-xs font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 disabled:opacity-60 px-3 py-2 rounded-xl transition">
+                            <Zap className="w-3.5 h-3.5" />
+                            Add {need} slot{need !== 1 ? "s" : ""} ({sc}/{total})
+                          </button>
+                        );
+                      })()}
+                      <button
+                        onClick={() => handleSave(div)}
+                        disabled={!!isSaving}
+                        className="flex items-center gap-2 bg-white hover:bg-gray-50 disabled:bg-gray-50 text-gray-800 font-bold text-sm px-4 py-2.5 rounded-xl border border-gray-200 shadow-sm transition">
+                        {isSaving
+                          ? <><Loader2 className="w-4 h-4 animate-spin text-gray-400" />Saving…</>
+                          : <><Save className="w-4 h-4 text-gray-500" />Save changes</>}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

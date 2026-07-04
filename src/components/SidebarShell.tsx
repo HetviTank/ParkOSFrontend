@@ -8,7 +8,7 @@ export default function SidebarShell({ children }: { children: React.ReactNode }
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
+    <div className="flex h-screen overflow-hidden bg-[#f8fafc]" style={{ colorScheme: "light" }}>
       {/* Mobile backdrop */}
       {open && (
         <div
@@ -50,7 +50,7 @@ export default function SidebarShell({ children }: { children: React.ReactNode }
         </div>
 
         {/* Scrollable page content */}
-        <div className="flex-1 overflow-auto">
+        <div className="flex-1 overflow-auto bg-[#f8fafc]">
           {children}
         </div>
       </div>

@@ -5,9 +5,9 @@ import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   ChevronRight, ArrowLeft, Search, Loader2, AlertCircle,
-  Car, User, Phone, MapPin, Clock, TrendingUp,
-  CalendarDays, BarChart2, UserCog, Shield,
-  ShieldX, BadgeCheck, Receipt,
+  Car, User, MapPin, Clock, TrendingUp,
+  CalendarDays, BarChart2, UserCog,
+  ShieldX, Receipt,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -51,10 +51,7 @@ interface HistoryItem extends Session {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 function daysSince(iso: string) { return Math.max(1, Math.ceil((Date.now() - new Date(iso).getTime()) / 86_400_000)); }
-function fmt(iso: string | null, opts?: Intl.DateTimeFormatOptions): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("en-IN", opts ?? { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-}
+
 function fmtShort(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -245,23 +242,24 @@ function ProfileContent() {
             <h1 className="text-xl font-bold text-gray-900">Truck Profile</h1>
           </div>
         </div>
-
-        {/* Search / Find */}
-        <form onSubmit={handleFind} className="flex items-center gap-2 self-start sm:self-auto">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
-            <input
-              value={searchInput}
-              onChange={e => setSearchInput(e.target.value)}
-              placeholder="Truck number…"
-              className="pl-8 pr-3 py-2 text-sm bg-white border border-gray-200 rounded-xl placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition w-44"
-            />
-          </div>
-          <button type="submit" disabled={loading || !searchInput.trim()} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-semibold text-sm px-4 py-2 rounded-xl shadow-sm shadow-blue-200 transition">
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-            Find
-          </button>
-        </form>
+        {/* compact search — only when a truck is already loaded */}
+        {truck && !loading && (
+          <form onSubmit={handleFind} className="flex items-center gap-2 self-start sm:self-auto">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+              <input
+                value={searchInput}
+                onChange={e => setSearchInput(e.target.value)}
+                placeholder="Search another truck…"
+                className="pl-9 pr-3 py-2 text-sm bg-white border border-gray-200 rounded-xl placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition w-52 font-mono uppercase tracking-wider"
+              />
+            </div>
+            <button type="submit" disabled={loading || !searchInput.trim()} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-semibold text-sm px-4 py-2 rounded-xl shadow-sm shadow-blue-200 transition">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+              Find
+            </button>
+          </form>
+        )}
       </div>
 
       {/* ── Error ── */}
@@ -286,14 +284,30 @@ function ProfileContent() {
         </div>
       )}
 
-      {/* ── Empty state ── */}
+      {/* ── Empty state / hero search ── */}
       {!loading && !truck && !error && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-6 py-16 flex flex-col items-center text-center">
-          <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mb-4">
-            <Car className="w-8 h-8 text-blue-400" />
+        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm px-6 py-20 flex flex-col items-center text-center">
+          <div className="w-24 h-24 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
+            <Car className="w-12 h-12 text-blue-500" />
           </div>
-          <h2 className="text-base font-bold text-gray-900">Search for a truck</h2>
-          <p className="text-sm text-gray-400 mt-1">Enter a truck registration number above to view its full profile, visit history, and analytics.</p>
+          <h2 className="text-3xl font-extrabold text-gray-900 mb-2 tracking-tight">Find a Truck Profile</h2>
+          <p className="text-sm text-gray-400 mb-10 max-w-sm">Enter a registration number to view full visit history, analytics, and owner details.</p>
+          <form onSubmit={handleFind} className="flex items-center gap-3 w-full max-w-lg">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+              <input
+                value={searchInput}
+                onChange={e => setSearchInput(e.target.value)}
+                placeholder="e.g. GJ 11 AB 1234"
+                className="w-full pl-12 pr-4 py-4 text-base bg-gray-50 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-blue-500 focus:bg-white shadow-sm transition font-mono uppercase tracking-wider"
+              />
+            </div>
+            <button type="submit" disabled={loading || !searchInput.trim()}
+              className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-blue-400 disabled:to-indigo-400 text-white font-bold px-7 py-4 rounded-2xl shadow-lg shadow-blue-200 transition text-sm whitespace-nowrap">
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+              Find Truck
+            </button>
+          </form>
         </div>
       )}
 
@@ -301,60 +315,59 @@ function ProfileContent() {
       {!loading && truck && (
         <>
           {/* ── Truck header card ── */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <div className="flex flex-col sm:flex-row sm:items-start gap-4">
-              {/* Left: badge + info */}
-              <div className="flex items-start gap-4 flex-1 min-w-0">
-                <div className="bg-gradient-to-br from-blue-700 to-violet-700 text-white font-bold text-sm font-mono tracking-widest px-4 py-3 rounded-2xl shadow-md shadow-blue-200 shrink-0">
-                  {truck.truck_number}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-bold text-gray-900">
-                    {cap(truck.truck_type)} truck
-                    {owner && <> · Owned by <span className="text-blue-700">{owner.name}</span>{owner.company ? <span className="text-gray-400 font-normal"> ({owner.company})</span> : null}</>}
+          <div className="relative overflow-hidden bg-gradient-to-r from-blue-700 via-blue-600 to-violet-700 rounded-2xl shadow-lg shadow-blue-200 p-5 sm:p-6">
+            <div className="absolute -right-8 -top-8 w-44 h-44 rounded-full bg-white/10" />
+            <div className="absolute right-10 -bottom-12 w-28 h-28 rounded-full bg-white/10" />
+            <div className="relative flex flex-col sm:flex-row sm:items-start gap-5">
+              {/* truck number badge */}
+              <div className="bg-white/20 backdrop-blur-sm border border-white/30 text-white font-black text-xl font-mono tracking-widest px-5 py-3 rounded-2xl shrink-0 shadow-inner">
+                {truck.truck_number}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-white font-bold text-lg leading-snug">
+                  {cap(truck.truck_type)} truck
+                  {owner && <> · Owned by <span className="text-blue-100">{owner.name}</span>{owner.company ? <span className="text-blue-200 font-normal text-base"> ({owner.company})</span> : null}</>}
+                </p>
+                {activeSession && (
+                  <p className="text-blue-100 text-sm mt-1 flex items-center gap-1.5 flex-wrap">
+                    <MapPin className="w-3.5 h-3.5 shrink-0" />
+                    {activeLocName} · {activeDivName} · Slot {activeSlotCode}
+                    <span className="opacity-50">·</span>
+                    <User className="w-3.5 h-3.5 shrink-0" /> {usualDrv}
                   </p>
+                )}
+                <div className="flex flex-wrap gap-2 mt-3">
                   {activeSession && (
-                    <p className="text-xs text-gray-400 mt-1 flex items-center gap-1.5 flex-wrap">
-                      <MapPin className="w-3 h-3 shrink-0" />
-                      {activeLocName} · {activeDivName} · Slot {activeSlotCode}
-                      <span>·</span>
-                      <User className="w-3 h-3 shrink-0" />Usual driver: {usualDrv}
-                    </p>
+                    <span className={`text-xs font-bold px-3 py-1.5 rounded-full border ${activeSession.status === "overdue" ? "bg-red-500/20 text-red-100 border-red-400/30" : "bg-emerald-500/20 text-emerald-100 border-emerald-400/30"}`}>
+                      {activeSession.status === "overdue" ? `⚠ Overdue · ${daysSince(activeSession.check_in_time)} days` : `● Parked · ${daysSince(activeSession.check_in_time)} ${daysSince(activeSession.check_in_time) === 1 ? "day" : "days"}`}
+                    </span>
                   )}
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    {activeSession && (
-                      <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${activeSession.status === "overdue" ? "bg-red-50 text-red-700 border-red-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>
-                        {activeSession.status === "overdue" ? `Overdue · ${daysSince(activeSession.check_in_time)} days` : `Parked · ${daysSince(activeSession.check_in_time)} ${daysSince(activeSession.check_in_time) === 1 ? "day" : "days"}`}
-                      </span>
-                    )}
-                    {totalVisits > 0 && sinceYear && (
-                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
-                        {totalVisits} visits since {sinceYear}
-                      </span>
-                    )}
-                    {totalRev > 0 && (
-                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                        ₹{totalRev.toLocaleString("en-IN")} total
-                      </span>
-                    )}
-                    {activeSession && (
-                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-                        {cap(activeSession.entry_type ?? "regular")} · pay per visit
-                      </span>
-                    )}
-                  </div>
+                  {totalVisits > 0 && sinceYear && (
+                    <span className="text-xs font-semibold px-3 py-1.5 rounded-full bg-white/15 text-white border border-white/25">
+                      {totalVisits} visits since {sinceYear}
+                    </span>
+                  )}
+                  {totalRev > 0 && (
+                    <span className="text-xs font-semibold px-3 py-1.5 rounded-full bg-amber-400/20 text-amber-100 border border-amber-300/30">
+                      ₹{totalRev.toLocaleString("en-IN")} total
+                    </span>
+                  )}
+                  {activeSession && (
+                    <span className="text-xs font-semibold px-3 py-1.5 rounded-full bg-white/15 text-white border border-white/25">
+                      {cap(activeSession.entry_type ?? "regular")}
+                    </span>
+                  )}
                 </div>
               </div>
-
-              {/* Right: action buttons */}
+              {/* action buttons */}
               <div className="flex items-center gap-2 shrink-0 self-start">
                 {owner && (
-                  <Link href={`/dashboard/owners`} className="flex items-center gap-1.5 border border-gray-200 text-gray-700 hover:bg-gray-50 text-xs font-semibold px-3 py-2 rounded-xl transition">
+                  <Link href="/dashboard/owners" className="flex items-center gap-1.5 bg-white/15 hover:bg-white/25 border border-white/20 text-white text-xs font-semibold px-3 py-2 rounded-xl transition backdrop-blur-sm">
                     <UserCog className="w-3.5 h-3.5" />View owner
                   </Link>
                 )}
-                <Link href="/dashboard/blacklist" className="flex items-center gap-1.5 bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 text-xs font-semibold px-3 py-2 rounded-xl transition">
-                  <ShieldX className="w-3.5 h-3.5" />Add to blacklist
+                <Link href="/dashboard/blacklist" className="flex items-center gap-1.5 bg-red-500/20 hover:bg-red-500/30 border border-red-300/30 text-red-100 text-xs font-semibold px-3 py-2 rounded-xl transition">
+                  <ShieldX className="w-3.5 h-3.5" />Blacklist
                 </Link>
               </div>
             </div>
@@ -454,7 +467,6 @@ function ProfileContent() {
             ) : (
               <div className="divide-y divide-gray-50">
                 {history.map(h => {
-                  const isPaid  = h.status === "released";
                   const isParked = h.status === "parked";
                   const isOver  = h.status === "overdue";
                   const details: string[] = [];
@@ -496,17 +508,17 @@ function StatCard({ icon: Icon, bg, ic, value, label, sub, highlight }: {
   value: string; label: string; sub: string; highlight?: boolean;
 }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex flex-col gap-2">
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col gap-3">
       <div className="flex items-start justify-between">
-        <div>
-          <p className={`text-xl font-extrabold leading-none ${highlight ? ic : "text-gray-900"}`}>{value}</p>
-          <p className="text-xs font-semibold text-gray-600 mt-1.5">{label}</p>
-        </div>
-        <div className={`w-9 h-9 rounded-xl ${bg} flex items-center justify-center shrink-0`}>
-          <Icon className={`w-4 h-4 ${ic}`} />
+        <div className={`w-11 h-11 rounded-2xl ${bg} flex items-center justify-center shrink-0`}>
+          <Icon className={`w-5 h-5 ${ic}`} />
         </div>
       </div>
-      <p className="text-xs text-gray-400">{sub}</p>
+      <div>
+        <p className={`text-3xl font-black leading-none tracking-tight ${highlight ? ic : "text-gray-900"}`}>{value}</p>
+        <p className="text-sm font-semibold text-gray-700 mt-2">{label}</p>
+        <p className="text-xs text-gray-400 mt-0.5">{sub}</p>
+      </div>
     </div>
   );
 }

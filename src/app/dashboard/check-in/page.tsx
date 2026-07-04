@@ -6,9 +6,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Truck as TruckIcon, User, MapPin, Clock, Search, Check,
-  AlertCircle, Loader2, CheckCircle2, ChevronRight,
+  AlertCircle, Loader2, ChevronRight,
   Car, FileText, IndianRupee, Info, ChevronDown, X as XIcon,
   BookOpen, Calendar, IndianRupee as RupeeIcon, ShieldX,
+  Layers, Zap, SquareParking, Lock,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -44,7 +45,7 @@ const fmt = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigi
 interface TruckItem  { id: string; truck_number: string; truck_type: string; owner_id: string | null }
 interface OwnerItem  { id: string; name: string; primary_mobile: string; company: string | null; alternate_mobile: string | null }
 interface LocItem    { id: string; name: string; city: string | null }
-interface DivItem    { id: string; name: string; truck_type: string; rate_per_day: number; gst_percent: number | null; status: string }
+interface DivItem    { id: string; name: string; truck_type: string; rate_per_day: number; gst_percent: number | null; status: string; total_slots?: number }
 interface SlotItem   { id: string; code: string; status: string }
 interface KhataItem  { id: string; owner_id: string; monthly_rate: number; billing_day: number; grace_days: number; is_active: boolean; is_deleted: boolean }
 
@@ -98,18 +99,19 @@ export default function CheckInPage() {
   const [remarks,      setRemarks]      = useState("");
 
   // ── location / division / slot
-  const [locations,  setLocations]  = useState<LocItem[]>([]);
-  const [locationId, setLocationId] = useState("");
-  const [divisions,  setDivisions]  = useState<DivItem[]>([]);
-  const [divisionId, setDivisionId] = useState("");
-  const [slots,      setSlots]      = useState<SlotItem[]>([]);
-  const [slotId,     setSlotId]     = useState("");
-  const [divLoading, setDivLoading] = useState(false);
-  const [slotLoading,setSlotLoading]= useState(false);
+  const [locations,    setLocations]    = useState<LocItem[]>([]);
+  const [locationId,   setLocationId]   = useState("");
+  const [divisions,    setDivisions]    = useState<DivItem[]>([]);
+  const [divisionId,   setDivisionId]   = useState("");
+  const [divOccupancy, setDivOccupancy] = useState<Record<string, { free: number; total: number }>>({});
+  const [slots,        setSlots]        = useState<SlotItem[]>([]);
+  const [slotId,       setSlotId]       = useState("");
+  const [divLoading,   setDivLoading]   = useState(false);
+  const [slotLoading,  setSlotLoading]  = useState(false);
 
-  const selectedDiv  = divisions.find((d) => d.id === divisionId) ?? null;
-  const selectedSlot = slots.find((s) => s.id === slotId) ?? null;
-  const ratePerDay   = selectedDiv?.rate_per_day ?? 0;
+  const selectedDiv = divisions.find((d) => d.id === divisionId) ?? null;
+  const freeSlots   = slots.filter(s => s.status === "free");
+  const ratePerDay  = selectedDiv?.rate_per_day ?? 0;
   const gstPct       = selectedDiv?.gst_percent ?? 18;
   const gstAmt       = ratePerDay * gstPct / 100;
   const estPerDay    = ratePerDay + gstAmt;
@@ -192,22 +194,35 @@ export default function CheckInPage() {
       .catch(() => {});
   }, []);
 
-  // ── load divisions when location changes
+  // ── load divisions + occupancy when location changes
   useEffect(() => {
-    if (!locationId) { setDivisions([]); setDivisionId(""); return; }
+    if (!locationId) { setDivisions([]); setDivisionId(""); setDivOccupancy({}); return; }
     setDivLoading(true);
-    apiFetch<{ list: DivItem[] }>(`/divisions?location_id=${locationId}&limit=100`)
-      .then((r) => { setDivisions(r.list); setDivisionId(""); setSlots([]); setSlotId(""); })
+    Promise.all([
+      apiFetch<{ list: DivItem[] }>(`/divisions?location_id=${locationId}&limit=100`),
+      apiFetch<{ division_occupancy: Array<{ division_id: string; occupied_slots: number; total_slots: number }> }>(
+        `/dashboard?location_id=${locationId}`
+      ).catch(() => ({ division_occupancy: [] })),
+    ])
+      .then(([divRes, dashRes]) => {
+        setDivisions(divRes.list ?? []);
+        const occ: Record<string, { free: number; total: number }> = {};
+        (dashRes.division_occupancy ?? []).forEach(o => {
+          occ[o.division_id] = { free: Math.max(0, o.total_slots - o.occupied_slots), total: o.total_slots };
+        });
+        setDivOccupancy(occ);
+        setDivisionId(""); setSlots([]); setSlotId("");
+      })
       .catch(() => {})
       .finally(() => setDivLoading(false));
   }, [locationId]);
 
-  // ── load free slots when division changes
+  // ── load ALL slots (free + occupied) when division changes
   useEffect(() => {
     if (!divisionId) { setSlots([]); setSlotId(""); return; }
     setSlotLoading(true);
-    apiFetch<{ list: SlotItem[] }>(`/slots?division_id=${divisionId}&status=free&limit=200`)
-      .then((r) => { setSlots(r.list); setSlotId(""); })
+    apiFetch<{ list: SlotItem[] }>(`/slots?division_id=${divisionId}&limit=200`)
+      .then((r) => { setSlots(r.list ?? []); setSlotId(""); })
       .catch(() => {})
       .finally(() => setSlotLoading(false));
   }, [divisionId]);
@@ -284,6 +299,16 @@ export default function CheckInPage() {
     if (!driverMobile.trim())return setSubmitError("Driver mobile is required.");
     if (!locationId)         return setSubmitError("Location is required.");
     if (!divisionId)         return setSubmitError("Division is required.");
+
+    // ── real-time slot availability check ────────────────────────────────
+    try {
+      const slotRes = await apiFetch<{ count: number; list: SlotItem[] }>(
+        `/slots?division_id=${divisionId}&status=free&limit=1`
+      );
+      if (!slotRes.list?.length) {
+        return setSubmitError("No free slots available in this division. Please select a different division.");
+      }
+    } catch { /* network error — let backend enforce */ }
 
     // ── final blacklist guard ─────────────────────────────────────────────
     try {
@@ -386,15 +411,24 @@ export default function CheckInPage() {
   return (
     <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto space-y-5">
 
-      {/* Page title */}
-      <div>
-        <div className="flex items-center gap-2 text-sm text-gray-400 mb-2">
-          <Link href="/dashboard" className="hover:text-blue-600 transition">Dashboard</Link>
-          <ChevronRight className="w-3.5 h-3.5" />
-          <span className="text-gray-600 font-medium">Truck Check-in</span>
+      {/* Page header */}
+      <div className="relative overflow-hidden bg-gradient-to-r from-blue-600 via-blue-600 to-indigo-700 rounded-2xl shadow-lg shadow-blue-200 px-6 py-5">
+        <div className="absolute -right-6 -top-6 w-36 h-36 rounded-full bg-white/10" />
+        <div className="absolute right-10 -bottom-10 w-24 h-24 rounded-full bg-white/10" />
+        <div className="relative flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-1.5 text-blue-200 text-xs mb-2">
+              <Link href="/dashboard" className="hover:text-white transition">Dashboard</Link>
+              <ChevronRight className="w-3 h-3" />
+              <span className="text-white/70">Check-in</span>
+            </div>
+            <h1 className="text-2xl font-extrabold text-white tracking-tight">Truck Check-in</h1>
+            <p className="text-sm text-blue-100 mt-0.5">Register a new parking session</p>
+          </div>
+          <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center shrink-0 mt-1">
+            <TruckIcon className="w-6 h-6 text-white" />
+          </div>
         </div>
-        <h1 className="text-2xl font-bold text-gray-900">Truck Check-in</h1>
-        <p className="text-sm text-gray-400 mt-0.5">Fill in the details to register a new parking session</p>
       </div>
 
       {/* Step indicator */}
@@ -403,19 +437,21 @@ export default function CheckInPage() {
           {STEPS.map((step, idx) => (
             <div key={step.n} className="flex items-center flex-1 last:flex-none">
               <div className="flex items-center gap-2.5 shrink-0">
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
                   idx === 0
-                    ? "bg-blue-600 text-white shadow-sm shadow-blue-200"
+                    ? "bg-blue-600 text-white shadow-md shadow-blue-200 ring-4 ring-blue-100"
                     : "bg-gray-100 text-gray-400"
                 }`}>
                   {step.n}
                 </div>
-                <span className={`text-sm font-medium hidden sm:block ${idx === 0 ? "text-blue-700" : "text-gray-400"}`}>
+                <span className={`text-sm hidden sm:block ${idx === 0 ? "font-bold text-blue-700" : "font-medium text-gray-400"}`}>
                   {step.label}
                 </span>
               </div>
               {idx < STEPS.length - 1 && (
-                <div className="flex-1 mx-3 h-px bg-gray-200 hidden sm:block" />
+                <div className="flex-1 mx-3 hidden sm:flex items-center">
+                  <div className={`h-0.5 w-full rounded-full ${idx === 0 ? "bg-gradient-to-r from-blue-200 to-gray-100" : "bg-gray-100"}`} />
+                </div>
               )}
             </div>
           ))}
@@ -433,6 +469,7 @@ export default function CheckInPage() {
             <FormCard
               icon={<TruckIcon className="w-4 h-4 text-blue-600" />}
               title="Truck & owner details"
+              accent="blue"
             >
               {/* Truck number */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -478,19 +515,25 @@ export default function CheckInPage() {
                       key={type}
                       type="button"
                       onClick={() => setEntryType(type)}
-                      className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${
+                      className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all ${
                         entryType === type
-                          ? "border-blue-500 bg-blue-50 text-blue-700"
-                          : "border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50"
+                          ? "border-blue-500 bg-gradient-to-b from-blue-50 to-indigo-50 shadow-sm shadow-blue-100"
+                          : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
                       }`}
                     >
-                      {type === "regular"
-                        ? <Car className={`w-5 h-5 mb-1 ${entryType === type ? "text-blue-600" : "text-gray-400"}`} />
-                        : <FileText className={`w-5 h-5 mb-1 ${entryType === type ? "text-blue-600" : "text-gray-400"}`} />
-                      }
-                      <span className="text-sm font-semibold capitalize">{type === "regular" ? "Regular vehicle" : "Khata vehicle"}</span>
+                      <div className={`w-10 h-10 rounded-xl mb-2 flex items-center justify-center transition-all ${
+                        entryType === type ? "bg-blue-600 shadow-md shadow-blue-200" : "bg-gray-100"
+                      }`}>
+                        {type === "regular"
+                          ? <Car className={`w-5 h-5 ${entryType === type ? "text-white" : "text-gray-400"}`} />
+                          : <FileText className={`w-5 h-5 ${entryType === type ? "text-white" : "text-gray-400"}`} />
+                        }
+                      </div>
+                      <span className={`text-sm font-bold ${entryType === type ? "text-blue-700" : "text-gray-700"}`}>
+                        {type === "regular" ? "Regular" : "Khata"}
+                      </span>
                       <span className={`text-xs mt-0.5 ${entryType === type ? "text-blue-500" : "text-gray-400"}`}>
-                        {type === "regular" ? "Pays per visit at checkout" : "Monthly billing on account"}
+                        {type === "regular" ? "Pay per visit" : "Monthly billing"}
                       </span>
                     </button>
                   ))}
@@ -563,6 +606,7 @@ export default function CheckInPage() {
             <FormCard
               icon={<User className="w-4 h-4 text-violet-600" />}
               title="Check-in driver details"
+              accent="violet"
             >
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -607,69 +651,56 @@ export default function CheckInPage() {
             <FormCard
               icon={<MapPin className="w-4 h-4 text-emerald-600" />}
               title="Location & slot"
+              accent="emerald"
             >
-              <div className="space-y-3">
+              <div className="space-y-4">
+                {/* Location */}
                 <div>
                   <label className={labelCls}>Location <Required /></label>
-                  <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={selectCls}>
-                    <option value="">Select location…</option>
-                    {locations.map((l) => (
-                      <option key={l.id} value={l.id}>{l.name}{l.city ? ` — ${l.city}` : ""}</option>
-                    ))}
-                  </select>
+                  <LocationDropdown
+                    locations={locations}
+                    locationId={locationId}
+                    onSelect={(id: string) => { setLocationId(id); setDivisionId(""); setSlots([]); setSlotId(""); }}
+                  />
                 </div>
 
+                {/* Division — custom searchable dropdown */}
                 <div>
                   <label className={labelCls}>Division <Required /></label>
-                  <div className="relative">
-                    <select
-                      value={divisionId}
-                      onChange={(e) => setDivisionId(e.target.value)}
-                      disabled={!locationId || divLoading}
-                      className={selectCls + (!locationId ? " opacity-50 cursor-not-allowed" : "")}
-                    >
-                      <option value="">{divLoading ? "Loading…" : "Select division…"}</option>
-                      {divisions.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.name} ({d.truck_type}, {slots.filter(s => s.status === "free").length} free)
-                        </option>
-                      ))}
-                    </select>
-                    {divLoading && <Loader2 className="absolute right-8 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-gray-400 pointer-events-none" />}
-                  </div>
+                  <DivisionDropdown
+                    divisions={divisions}
+                    divisionId={divisionId}
+                    onSelect={setDivisionId}
+                    loading={divLoading}
+                    disabled={!locationId}
+                    occupancy={divOccupancy}
+                  />
                 </div>
 
-                <div>
-                  <label className={labelCls}>Assign slot</label>
-                  <div className="relative">
-                    <select
-                      value={slotId}
-                      onChange={(e) => setSlotId(e.target.value)}
-                      disabled={!divisionId || slotLoading}
-                      className={selectCls + (!divisionId ? " opacity-50 cursor-not-allowed" : "")}
-                    >
-                      <option value="">{slotLoading ? "Loading…" : "Auto-assign (any free slot)"}</option>
-                      {slots.map((s) => (
-                        <option key={s.id} value={s.id}>{s.code} — Free</option>
-                      ))}
-                    </select>
-                    {slotLoading && <Loader2 className="absolute right-8 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-gray-400 pointer-events-none" />}
-                  </div>
-                </div>
-
-                {/* Slot availability badge */}
-                {selectedSlot && (
-                  <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2.5">
-                    <Check className="w-4 h-4 text-emerald-500 shrink-0" />
-                    <p className="text-sm text-emerald-700 font-medium">
-                      Slot {selectedSlot.code} — {selectedDiv?.name} is available
-                    </p>
+                {/* Slot picker — custom dropdown */}
+                {divisionId && (
+                  <div>
+                    <label className={labelCls}>Assign slot</label>
+                    <SlotDropdown
+                      slots={slots}
+                      slotId={slotId}
+                      onSelect={setSlotId}
+                      loading={slotLoading}
+                    />
                   </div>
                 )}
-                {divisionId && !slotId && slots.length === 0 && !slotLoading && (
+
+                {/* No-slot warning */}
+                {divisionId && !slotLoading && freeSlots.length === 0 && slots.length > 0 && (
                   <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5">
                     <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
-                    <p className="text-sm text-rose-700 font-medium">No free slots in this division</p>
+                    <p className="text-sm text-rose-700 font-medium">All {slots.length} slots are occupied in this division</p>
+                  </div>
+                )}
+                {divisionId && !slotLoading && slots.length === 0 && (
+                  <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5">
+                    <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                    <p className="text-sm text-rose-700 font-medium">No slots configured for this division</p>
                   </div>
                 )}
               </div>
@@ -679,6 +710,7 @@ export default function CheckInPage() {
             <FormCard
               icon={<IndianRupee className="w-4 h-4 text-amber-600" />}
               title="Rate preview"
+              accent="amber"
             >
               {selectedDiv ? (
                 <div className="space-y-2.5">
@@ -701,6 +733,7 @@ export default function CheckInPage() {
             <FormCard
               icon={<Clock className="w-4 h-4 text-sky-600" />}
               title="Check-in time"
+              accent="sky"
             >
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -722,16 +755,26 @@ export default function CheckInPage() {
               </div>
             )}
 
+            {/* no-slot warning */}
+            {divisionId && !slotLoading && freeSlots.length === 0 && (
+              <div className="flex items-start gap-2.5 bg-rose-50 border border-rose-200 rounded-xl px-4 py-3">
+                <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                <p className="text-sm text-rose-700 font-medium">
+                  No free slots in this division. Check-in is not allowed until a slot becomes available.
+                </p>
+              </div>
+            )}
+
             {/* Submit */}
             <button
               type="submit"
-              disabled={submitting}
-              className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold py-3.5 rounded-xl shadow-sm shadow-blue-200 transition text-sm"
+              disabled={submitting || (!!divisionId && !slotLoading && freeSlots.length === 0)}
+              className="w-full flex items-center justify-center gap-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-200/60 transition-all text-sm tracking-wide"
             >
               {submitting ? (
-                <><Loader2 className="w-4 h-4 animate-spin" /> Processing…</>
+                <><Loader2 className="w-5 h-5 animate-spin" /> Processing…</>
               ) : (
-                <><CheckCircle2 className="w-4 h-4" /> Confirm check-in &amp; print token</>
+                <><TruckIcon className="w-5 h-5" /> Confirm Check-in &amp; Print Token</>
               )}
             </button>
           </div>
@@ -770,26 +813,42 @@ export default function CheckInPage() {
 
       {/* ── success modal ─────────────────────────────────────────────────── */}
       {toast && typeof window !== "undefined" && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center">
-          {/* backdrop */}
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-          {/* card */}
-          <div className="relative bg-white rounded-3xl shadow-2xl px-10 py-10 flex flex-col items-center text-center max-w-sm w-full mx-4 animate-in zoom-in-95 fade-in duration-300">
-            {/* animated ring + icon */}
-            <div className="relative mb-6">
-              <div className="w-24 h-24 rounded-full border-4 border-emerald-400 animate-ping absolute inset-0 opacity-20" />
-              <div className="w-24 h-24 rounded-full border-4 border-emerald-400 flex items-center justify-center">
-                <CheckCircle2 className="w-12 h-12 text-emerald-500" strokeWidth={1.5} />
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-gray-950/75 backdrop-blur-md" />
+          <div className="relative w-full max-w-sm overflow-hidden rounded-3xl shadow-2xl">
+            {/* emerald gradient top band */}
+            <div className="relative bg-gradient-to-br from-emerald-500 to-teal-600 px-8 pt-8 pb-10 flex flex-col items-center text-center overflow-hidden">
+              <div className="absolute -top-6 -right-6 w-32 h-32 rounded-full bg-white/10" />
+              <div className="absolute -bottom-8 -left-4 w-24 h-24 rounded-full bg-white/10" />
+              {/* countdown ring + check */}
+              <div className="relative w-20 h-20 mb-4">
+                <svg className="absolute inset-0 w-20 h-20 -rotate-90" viewBox="0 0 80 80">
+                  <circle cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="4" />
+                  <circle cx="40" cy="40" r="32" fill="none" stroke="white" strokeWidth="4"
+                    strokeDasharray="201" strokeLinecap="round"
+                    className="animate-[shrink_2.5s_linear_forwards]"
+                  />
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center bg-white/20 rounded-full">
+                  <Check className="w-9 h-9 text-white" strokeWidth={2.5} />
+                </div>
               </div>
+              <h2 className="text-2xl font-extrabold text-white tracking-tight relative z-10">Check-in Complete!</h2>
+              <p className="text-emerald-100 text-sm mt-1 relative z-10">Parking session is now active</p>
             </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">Check-in Successful!</h2>
-            <p className="text-gray-500 text-sm leading-relaxed">
-              Truck <span className="font-semibold text-gray-800">{toast.truck}</span> has been checked in successfully.
-            </p>
-            <p className="text-xs text-gray-400 mt-4">Redirecting to All Trucks…</p>
-            {/* progress bar */}
-            <div className="w-full bg-gray-100 rounded-full h-1 mt-3 overflow-hidden">
-              <div className="h-1 bg-emerald-500 rounded-full animate-[shrink_2.5s_linear_forwards]" />
+            {/* white bottom */}
+            <div className="bg-white px-6 py-6 space-y-4">
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl px-5 py-4 text-center">
+                <p className="text-[10px] font-bold text-blue-400 uppercase tracking-[0.15em] mb-1.5">Truck registered</p>
+                <p className="text-3xl font-black text-blue-700 tracking-widest font-mono">{toast.truck}</p>
+              </div>
+              <div className="flex items-center justify-center">
+                <span className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold px-3 py-1.5 rounded-full">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Session Active
+                </span>
+              </div>
+              <p className="text-center text-xs text-gray-400">Redirecting to All Trucks…</p>
             </div>
           </div>
         </div>,
@@ -801,20 +860,32 @@ export default function CheckInPage() {
 
 // ── sub-components ────────────────────────────────────────────────────────────
 
+type AccentColor = "blue" | "violet" | "emerald" | "amber" | "sky";
+const accentStyles: Record<AccentColor, { border: string; header: string; iconBg: string }> = {
+  blue:    { border: "border-l-blue-500",    header: "bg-blue-50/50",    iconBg: "bg-blue-100"    },
+  violet:  { border: "border-l-violet-500",  header: "bg-violet-50/50",  iconBg: "bg-violet-100"  },
+  emerald: { border: "border-l-emerald-500", header: "bg-emerald-50/50", iconBg: "bg-emerald-100" },
+  amber:   { border: "border-l-amber-500",   header: "bg-amber-50/50",   iconBg: "bg-amber-100"   },
+  sky:     { border: "border-l-sky-500",     header: "bg-sky-50/50",     iconBg: "bg-sky-100"     },
+};
+
 function FormCard({
-  icon, title, children,
+  icon, title, children, accent = "blue",
 }: {
-  icon: React.ReactNode; title: string; children: React.ReactNode;
+  icon: React.ReactNode; title: string; children: React.ReactNode; accent?: AccentColor;
 }) {
+  const st = accentStyles[accent];
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
-      <div className="flex items-center gap-2.5 pb-1 border-b border-gray-100">
-        <div className="w-7 h-7 rounded-lg bg-gray-50 flex items-center justify-center border border-gray-100">
+    <div className={`bg-white rounded-2xl border border-gray-100 border-l-4 ${st.border} shadow-sm overflow-hidden`}>
+      <div className={`flex items-center gap-3 px-5 py-3.5 border-b border-gray-100 ${st.header}`}>
+        <div className={`w-8 h-8 rounded-xl ${st.iconBg} flex items-center justify-center`}>
           {icon}
         </div>
         <h2 className="text-sm font-bold text-gray-800">{title}</h2>
       </div>
-      {children}
+      <div className="p-5 space-y-4">
+        {children}
+      </div>
     </div>
   );
 }
@@ -846,15 +917,535 @@ function Required() {
 }
 
 // ── shared class strings ──────────────────────────────────────────────────────
-const labelCls = "block text-xs font-semibold text-gray-600 mb-1.5";
+const labelCls = "block text-xs font-semibold text-gray-500 mb-1.5 tracking-wide";
 const inputCls  =
-  "w-full px-3.5 py-2.5 text-sm text-gray-900 bg-gray-50 border border-gray-200 " +
-  "rounded-xl placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 " +
-  "focus:border-transparent focus:bg-white transition";
+  "w-full px-3.5 py-2.5 text-sm text-gray-900 bg-white border border-gray-200 " +
+  "rounded-xl placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400/30 " +
+  "focus:border-blue-400 shadow-sm transition";
 const selectCls =
-  "w-full px-3.5 py-2.5 text-sm text-gray-900 bg-gray-50 border border-gray-200 " +
-  "rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent " +
-  "focus:bg-white transition appearance-none cursor-pointer";
+  "w-full px-3.5 py-2.5 text-sm text-gray-900 bg-white border border-gray-200 " +
+  "rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 " +
+  "shadow-sm transition appearance-none cursor-pointer";
+
+// ── DivisionDropdown ──────────────────────────────────────────────────────────
+function divTypeStyle(t: string) {
+  switch (t.toLowerCase()) {
+    case "heavy":  return { pill: "bg-violet-100 text-violet-700", avatar: "bg-gradient-to-br from-violet-500 to-indigo-600", dot: "bg-violet-400" };
+    case "medium": return { pill: "bg-teal-100 text-teal-700",     avatar: "bg-gradient-to-br from-teal-500 to-cyan-600",    dot: "bg-teal-400" };
+    case "light":  return { pill: "bg-emerald-100 text-emerald-700", avatar: "bg-gradient-to-br from-emerald-500 to-green-600", dot: "bg-emerald-400" };
+    default:       return { pill: "bg-gray-100 text-gray-600",     avatar: "bg-gradient-to-br from-gray-400 to-slate-500",   dot: "bg-gray-400" };
+  }
+}
+
+function DivisionDropdown({ divisions, divisionId, onSelect, loading, disabled, occupancy }: {
+  divisions: DivItem[];
+  divisionId: string;
+  onSelect: (id: string) => void;
+  loading: boolean;
+  disabled?: boolean;
+  occupancy?: Record<string, { free: number; total: number }>;
+}) {
+  const [open,   setOpen]   = useState(false);
+  const [search, setSearch] = useState("");
+  const [rect,   setRect]   = useState<DOMRect | null>(null);
+  const btnRef   = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const selected = divisions.find(d => d.id === divisionId) ?? null;
+
+  function openDropdown() {
+    if (disabled || loading) return;
+    if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+    setOpen(true);
+    setSearch("");
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function reposition() { if (btnRef.current) setRect(btnRef.current.getBoundingClientRect()); }
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => { window.removeEventListener("scroll", reposition, true); window.removeEventListener("resize", reposition); };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (
+        panelRef.current && !panelRef.current.contains(e.target as Node) &&
+        btnRef.current   && !btnRef.current.contains(e.target as Node)
+      ) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const filtered = divisions.filter(d =>
+    d.name.toLowerCase().includes(search.toLowerCase()) ||
+    d.truck_type.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const panelStyle: React.CSSProperties = rect ? {
+    position: "fixed", left: rect.left, width: rect.width, zIndex: 9999,
+    ...(rect.bottom + 340 > window.innerHeight
+      ? { bottom: window.innerHeight - rect.top + 4 }
+      : { top: rect.bottom + 4 }),
+  } : { display: "none" };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => open ? setOpen(false) : openDropdown()}
+        disabled={loading || disabled}
+        className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl border-2 text-sm transition-all
+          ${disabled || loading
+            ? "opacity-50 cursor-not-allowed border-gray-200 bg-gray-50"
+            : open
+            ? "border-emerald-500 bg-white shadow-lg shadow-emerald-100/60 ring-4 ring-emerald-50"
+            : selected
+            ? "border-emerald-300 bg-emerald-50/40 hover:border-emerald-400"
+            : "border-dashed border-gray-300 bg-white hover:border-emerald-400 hover:bg-emerald-50/20"
+          }`}
+      >
+        {loading
+          ? <Loader2 className="w-5 h-5 animate-spin text-gray-400 shrink-0" />
+          : selected
+          ? <div className={`w-7 h-7 rounded-lg ${divTypeStyle(selected.truck_type).avatar} flex items-center justify-center shrink-0`}>
+              <span className="text-[10px] font-black text-white">{selected.name.charAt(0).toUpperCase()}</span>
+            </div>
+          : <Layers className="w-4 h-4 text-gray-400 shrink-0" />
+        }
+
+        {selected ? (
+          <div className="flex-1 min-w-0 text-left">
+            <p className="text-sm font-bold text-gray-900 truncate">{selected.name}</p>
+            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${divTypeStyle(selected.truck_type).pill}`}>
+                {selected.truck_type}
+              </span>
+              <span className="text-[11px] text-gray-400">₹{selected.rate_per_day.toLocaleString("en-IN")}/day</span>
+              {occupancy?.[selected.id] != null && (
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                  occupancy[selected.id].free > 0 ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                }`}>
+                  {occupancy[selected.id].free} free
+                </span>
+              )}
+            </div>
+          </div>
+        ) : (
+          <span className="flex-1 text-left text-gray-400 font-medium">
+            {loading ? "Loading divisions…" : disabled ? "Select a location first" : "Select division…"}
+          </span>
+        )}
+
+        {selected && !loading && (
+          <span role="button"
+            onClick={(e) => { e.stopPropagation(); onSelect(""); setOpen(false); }}
+            className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition shrink-0">
+            <XIcon className="w-3.5 h-3.5" />
+          </span>
+        )}
+        {!selected && !loading && (
+          <ChevronDown className={`w-4 h-4 text-gray-400 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+        )}
+      </button>
+
+      {open && typeof window !== "undefined" && createPortal(
+        <div ref={panelRef} style={panelStyle}
+          className="bg-white rounded-2xl border border-gray-200 shadow-2xl shadow-gray-300/40 overflow-hidden">
+
+          <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-gray-100 bg-gray-50/80">
+            <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <input ref={inputRef} value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search divisions…"
+              className="flex-1 text-xs bg-transparent outline-none text-gray-700 placeholder-gray-400" />
+            {search && (
+              <button type="button" onClick={() => setSearch("")} className="text-gray-300 hover:text-gray-600 transition">
+                <XIcon className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          <ul className="max-h-64 overflow-y-auto py-1.5">
+            {filtered.length === 0 && (
+              <li className="px-4 py-8 text-center text-xs text-gray-400">
+                {divisions.length === 0 ? "No divisions for this location" : "No results"}
+              </li>
+            )}
+            {filtered.map(d => {
+              const ts = divTypeStyle(d.truck_type);
+              const isSelected = d.id === divisionId;
+              return (
+                <li key={d.id}>
+                  <button type="button"
+                    onClick={() => { onSelect(d.id); setOpen(false); }}
+                    className={`w-full flex items-center gap-3 px-3.5 py-3 text-left transition
+                      ${isSelected ? "bg-emerald-50" : "hover:bg-gray-50"}`}>
+                    <div className={`w-10 h-10 rounded-xl ${ts.avatar} flex items-center justify-center shrink-0 shadow-sm`}>
+                      <span className="text-xs font-black text-white">{d.name.charAt(0).toUpperCase()}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-bold truncate ${isSelected ? "text-emerald-700" : "text-gray-900"}`}>{d.name}</p>
+                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${ts.pill}`}>{d.truck_type}</span>
+                        <span className="text-[11px] text-gray-400">₹{d.rate_per_day.toLocaleString("en-IN")}/day</span>
+                        {occupancy?.[d.id] != null ? (
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                            occupancy[d.id].free > 0 ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                          }`}>
+                            {occupancy[d.id].free}/{occupancy[d.id].total} free
+                          </span>
+                        ) : d.total_slots != null ? (
+                          <span className="text-[11px] text-gray-400">{d.total_slots} slots</span>
+                        ) : null}
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <div className="w-6 h-6 rounded-full bg-emerald-600 flex items-center justify-center shrink-0 shadow-sm">
+                        <Check className="w-3.5 h-3.5 text-white" />
+                      </div>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="px-4 py-2 border-t border-gray-100 bg-gray-50/60">
+            <p className="text-[11px] text-gray-400">{filtered.length} of {divisions.length} division{divisions.length !== 1 ? "s" : ""}</p>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
+// ── LocationDropdown ──────────────────────────────────────────────────────────
+function LocationDropdown({ locations, locationId, onSelect }: {
+  locations: LocItem[];
+  locationId: string;
+  onSelect: (id: string) => void;
+}) {
+  const [open,   setOpen]   = useState(false);
+  const [search, setSearch] = useState("");
+  const [rect,   setRect]   = useState<DOMRect | null>(null);
+  const btnRef   = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const selected = locations.find(l => l.id === locationId) ?? null;
+
+  function openDropdown() {
+    if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+    setOpen(true); setSearch("");
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function reposition() { if (btnRef.current) setRect(btnRef.current.getBoundingClientRect()); }
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => { window.removeEventListener("scroll", reposition, true); window.removeEventListener("resize", reposition); };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (
+        panelRef.current && !panelRef.current.contains(e.target as Node) &&
+        btnRef.current   && !btnRef.current.contains(e.target as Node)
+      ) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const filtered = locations.filter(l =>
+    l.name.toLowerCase().includes(search.toLowerCase()) ||
+    (l.city ?? "").toLowerCase().includes(search.toLowerCase())
+  );
+
+  const panelStyle: React.CSSProperties = rect ? {
+    position: "fixed", left: rect.left, width: rect.width, zIndex: 9999,
+    ...(rect.bottom + 300 > window.innerHeight
+      ? { bottom: window.innerHeight - rect.top + 4 }
+      : { top: rect.bottom + 4 }),
+  } : { display: "none" };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => open ? setOpen(false) : openDropdown()}
+        className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl border-2 text-sm transition-all
+          ${open
+            ? "border-emerald-500 bg-white shadow-lg shadow-emerald-100/60 ring-4 ring-emerald-50"
+            : selected
+            ? "border-emerald-300 bg-emerald-50/40 hover:border-emerald-400"
+            : "border-dashed border-gray-300 bg-white hover:border-emerald-400 hover:bg-emerald-50/20"
+          }`}
+      >
+        <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${selected ? "bg-gradient-to-br from-emerald-500 to-teal-600" : "bg-gray-100"}`}>
+          <MapPin className={`w-3.5 h-3.5 ${selected ? "text-white" : "text-gray-400"}`} />
+        </div>
+
+        {selected ? (
+          <div className="flex-1 min-w-0 text-left">
+            <p className="text-sm font-bold text-gray-900 truncate">{selected.name}</p>
+            {selected.city && <p className="text-[11px] text-gray-400">{selected.city}</p>}
+          </div>
+        ) : (
+          <span className="flex-1 text-left text-gray-400 font-medium">
+            {locations.length === 0 ? "Loading locations…" : "Select location…"}
+          </span>
+        )}
+
+        {selected ? (
+          <span role="button"
+            onClick={(e) => { e.stopPropagation(); onSelect(""); setOpen(false); }}
+            className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition shrink-0">
+            <XIcon className="w-3.5 h-3.5" />
+          </span>
+        ) : (
+          <ChevronDown className={`w-4 h-4 text-gray-400 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+        )}
+      </button>
+
+      {open && typeof window !== "undefined" && createPortal(
+        <div ref={panelRef} style={panelStyle}
+          className="bg-white rounded-2xl border border-gray-200 shadow-2xl shadow-gray-300/40 overflow-hidden">
+          <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-gray-100 bg-gray-50/80">
+            <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <input ref={inputRef} value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search locations…"
+              className="flex-1 text-xs bg-transparent outline-none text-gray-700 placeholder-gray-400" />
+            {search && (
+              <button type="button" onClick={() => setSearch("")} className="text-gray-300 hover:text-gray-600 transition">
+                <XIcon className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+          <ul className="max-h-56 overflow-y-auto py-1.5">
+            {filtered.length === 0 && (
+              <li className="px-4 py-8 text-center text-xs text-gray-400">No locations found</li>
+            )}
+            {filtered.map(l => {
+              const isSel = l.id === locationId;
+              return (
+                <li key={l.id}>
+                  <button type="button"
+                    onClick={() => { onSelect(l.id); setOpen(false); }}
+                    className={`w-full flex items-center gap-3 px-3.5 py-3 text-left transition
+                      ${isSel ? "bg-emerald-50" : "hover:bg-gray-50"}`}>
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shrink-0 shadow-sm">
+                      <MapPin className="w-4 h-4 text-white" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-bold truncate ${isSel ? "text-emerald-700" : "text-gray-900"}`}>{l.name}</p>
+                      {l.city && <p className="text-[11px] text-gray-400">{l.city}</p>}
+                    </div>
+                    {isSel && (
+                      <div className="w-6 h-6 rounded-full bg-emerald-600 flex items-center justify-center shrink-0 shadow-sm">
+                        <Check className="w-3.5 h-3.5 text-white" />
+                      </div>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="px-4 py-2 border-t border-gray-100 bg-gray-50/60">
+            <p className="text-[11px] text-gray-400">{filtered.length} of {locations.length} location{locations.length !== 1 ? "s" : ""}</p>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
+// ── SlotDropdown ──────────────────────────────────────────────────────────────
+function SlotDropdown({ slots, slotId, onSelect, loading }: {
+  slots: SlotItem[];
+  slotId: string;
+  onSelect: (id: string) => void;
+  loading: boolean;
+}) {
+  const [open,   setOpen]   = useState(false);
+  const [rect,   setRect]   = useState<DOMRect | null>(null);
+  const btnRef   = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const freeSlots     = slots.filter(s => s.status === "free");
+  const occupiedSlots = slots.filter(s => s.status !== "free");
+  const selected      = freeSlots.find(s => s.id === slotId) ?? null;
+
+  function openDropdown() {
+    if (loading) return;
+    if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+    setOpen(true);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function reposition() { if (btnRef.current) setRect(btnRef.current.getBoundingClientRect()); }
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => { window.removeEventListener("scroll", reposition, true); window.removeEventListener("resize", reposition); };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (
+        panelRef.current && !panelRef.current.contains(e.target as Node) &&
+        btnRef.current   && !btnRef.current.contains(e.target as Node)
+      ) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const panelStyle: React.CSSProperties = rect ? {
+    position: "fixed", left: rect.left, width: rect.width, zIndex: 9999,
+    ...(rect.bottom + 320 > window.innerHeight
+      ? { bottom: window.innerHeight - rect.top + 4 }
+      : { top: rect.bottom + 4 }),
+  } : { display: "none" };
+
+  if (loading) return (
+    <div className="flex items-center gap-2.5 px-3.5 py-3 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 text-sm text-gray-400">
+      <Loader2 className="w-4 h-4 animate-spin shrink-0" /> Loading slots…
+    </div>
+  );
+
+  if (slots.length === 0) return null;
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => open ? setOpen(false) : openDropdown()}
+        className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl border-2 text-sm transition-all
+          ${open
+            ? "border-emerald-500 bg-white shadow-lg shadow-emerald-100/60 ring-4 ring-emerald-50"
+            : selected
+            ? "border-emerald-300 bg-emerald-50/40 hover:border-emerald-400"
+            : "border-dashed border-gray-300 bg-white hover:border-emerald-400 hover:bg-emerald-50/20"
+          }`}
+      >
+        <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${selected ? "bg-gradient-to-br from-emerald-500 to-teal-600" : "bg-gray-100"}`}>
+          <SquareParking className={`w-3.5 h-3.5 ${selected ? "text-white" : "text-gray-400"}`} />
+        </div>
+
+        {selected ? (
+          <div className="flex-1 min-w-0 text-left">
+            <p className="text-sm font-bold text-gray-900">{selected.code}</p>
+            <p className="text-[11px] text-emerald-600 font-semibold">Free slot selected</p>
+          </div>
+        ) : (
+          <div className="flex-1 text-left">
+            <p className="text-sm font-medium text-gray-400">Auto-assign</p>
+            <p className="text-[11px] text-gray-400">Best available slot picked automatically</p>
+          </div>
+        )}
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-700">
+            {freeSlots.length} free
+          </span>
+          {selected ? (
+            <span role="button"
+              onClick={(e) => { e.stopPropagation(); onSelect(""); setOpen(false); }}
+              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition">
+              <XIcon className="w-3.5 h-3.5" />
+            </span>
+          ) : (
+            <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+          )}
+        </div>
+      </button>
+
+      {open && typeof window !== "undefined" && createPortal(
+        <div ref={panelRef} style={panelStyle}
+          className="bg-white rounded-2xl border border-gray-200 shadow-2xl shadow-gray-300/40 overflow-hidden">
+
+          {/* Auto-assign option */}
+          <button type="button"
+            onClick={() => { onSelect(""); setOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3.5 py-3 border-b border-gray-100 transition
+              ${!slotId ? "bg-blue-50" : "hover:bg-gray-50"}`}>
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${!slotId ? "bg-blue-600" : "bg-gray-100"}`}>
+              <Zap className={`w-4 h-4 ${!slotId ? "text-white" : "text-gray-400"}`} />
+            </div>
+            <div className="flex-1 text-left">
+              <p className={`text-sm font-bold ${!slotId ? "text-blue-700" : "text-gray-700"}`}>Auto-assign</p>
+              <p className={`text-[11px] ${!slotId ? "text-blue-500" : "text-gray-400"}`}>Best available slot picked automatically</p>
+            </div>
+            {!slotId && <div className="w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center shrink-0"><Check className="w-3.5 h-3.5 text-white" /></div>}
+          </button>
+
+          <ul className="max-h-56 overflow-y-auto py-1.5">
+            {freeSlots.map(s => {
+              const isSel = s.id === slotId;
+              return (
+                <li key={s.id}>
+                  <button type="button"
+                    onClick={() => { onSelect(s.id); setOpen(false); }}
+                    className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left transition
+                      ${isSel ? "bg-emerald-50" : "hover:bg-gray-50"}`}>
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${isSel ? "bg-gradient-to-b from-emerald-500 to-teal-500" : "bg-emerald-50 border border-emerald-200"}`}>
+                      <SquareParking className={`w-4 h-4 ${isSel ? "text-white" : "text-emerald-500"}`} />
+                    </div>
+                    <div className="flex-1">
+                      <p className={`text-sm font-bold ${isSel ? "text-emerald-700" : "text-gray-900"}`}>{s.code}</p>
+                      <p className="text-[10px] font-semibold text-emerald-500">FREE</p>
+                    </div>
+                    {isSel && <div className="w-6 h-6 rounded-full bg-emerald-600 flex items-center justify-center shrink-0"><Check className="w-3.5 h-3.5 text-white" /></div>}
+                  </button>
+                </li>
+              );
+            })}
+            {occupiedSlots.map(s => (
+              <li key={s.id}>
+                <div className="w-full flex items-center gap-3 px-3.5 py-2.5 opacity-50 cursor-not-allowed">
+                  <div className="w-9 h-9 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center shrink-0">
+                    <Lock className="w-4 h-4 text-rose-400" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-gray-400">{s.code}</p>
+                    <p className="text-[10px] font-semibold text-rose-400">OCCUPIED</p>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          <div className="px-4 py-2 border-t border-gray-100 bg-gray-50/60 flex items-center gap-3">
+            <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{freeSlots.length} free
+            </span>
+            {occupiedSlots.length > 0 && (
+              <span className="flex items-center gap-1 text-[11px] text-rose-500 font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />{occupiedSlots.length} occupied
+              </span>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
 
 // ── KhataDropdown (defined here to avoid forward-reference issues) ─────────────
 interface KhataDropdownProps {
