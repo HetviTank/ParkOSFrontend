@@ -295,7 +295,7 @@ function KPICard({
 // ── Slot Map ──────────────────────────────────────────────────────────────────
 function SlotMapCard({ divisions }: { divisions: SlotMapDivision[] }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col h-full min-h-[320px]">
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col" style={{ height: 420 }}>
       <div className="flex items-center justify-between mb-4 shrink-0">
         <h2 className="font-semibold text-gray-900">Live Slot Map</h2>
         <div className="flex items-center gap-3 text-xs text-gray-500">
@@ -308,7 +308,7 @@ function SlotMapCard({ divisions }: { divisions: SlotMapDivision[] }) {
         </div>
       </div>
 
-      <div className="space-y-5 overflow-y-auto flex-1 min-h-0 pr-1">
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-5 pr-1">
         {divisions.map((div) => (
           <div key={div.division_id}>
             <p className="text-[11px] font-bold text-blue-600 uppercase tracking-widest mb-2">

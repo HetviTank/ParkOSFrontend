@@ -5,8 +5,10 @@ import Link from "next/link";
 import {
   ChevronRight, Bell, BellOff, CheckCircle2, AlertTriangle,
   AlertCircle, Clock, Truck, X, Loader2, Plus, RefreshCw,
-  ChevronDown, Phone, Info,
+  ChevronDown, ChevronLeft, Phone, Info, CheckCheck,
 } from "lucide-react";
+
+const PER_PAGE = 15;
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -29,64 +31,44 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
 
 // ── types ─────────────────────────────────────────────────────────────────────
 interface Notice {
-  id: string;
-  notice_type: string;
-  message: string | null;
-  truck_id: string | null;
-  owner_id: string | null;
-  session_id: string | null;
-  created_by: string | null;
-  is_system: boolean;
-  status: string;
-  resolved_at: string | null;
-  created_at: string | null;
-  // enriched
-  truck_number?: string;
-  owner_name?: string;
-  owner_mobile?: string;
-  created_by_name?: string;
+  id: string; notice_type: string; message: string | null;
+  truck_id: string | null; owner_id: string | null; session_id: string | null;
+  created_by: string | null; is_system: boolean; status: string;
+  resolved_at: string | null; created_at: string | null;
+  truck_number?: string; owner_name?: string; owner_mobile?: string; created_by_name?: string;
 }
 interface AlertType { id: string; name: string | null; code: string; description: string | null }
-interface TruckObj { id: string; truck_number: string }
-interface Owner { id: string; name: string; primary_mobile: string }
+interface TruckObj  { id: string; truck_number: string }
+interface Owner     { id: string; name: string; primary_mobile: string }
 interface AdminUser { id: string; name: string }
 
-// ── notice type config ────────────────────────────────────────────────────────
-function noticeConfig(type: string): {
-  label: string; cardBg: string; cardBorder: string;
-  dotBg: string; badgeCls: string; icon: React.ReactNode;
-} {
+// ── helpers ───────────────────────────────────────────────────────────────────
+function noticeConfig(type: string) {
   const t = type.toLowerCase();
   if (t.includes("mismatch") || t.includes("driver"))
-    return { label: "Driver mismatch", cardBg: "bg-red-50", cardBorder: "border-red-200", dotBg: "bg-red-400", badgeCls: "bg-red-100 text-red-700 border-red-200", icon: <AlertCircle className="w-4 h-4 text-red-500" /> };
+    return { label: "Driver mismatch", dot: "bg-red-400",    badge: "bg-red-100 text-red-700 border-red-200",    row: "bg-red-50/40",   icon: <AlertCircle  className="w-3.5 h-3.5 text-red-500" />    };
   if (t.includes("overdue") || t.includes("khata"))
-    return { label: "Overdue", cardBg: "bg-rose-50", cardBorder: "border-rose-200", dotBg: "bg-rose-400", badgeCls: "bg-rose-100 text-rose-700 border-rose-200", icon: <AlertTriangle className="w-4 h-4 text-rose-500" /> };
+    return { label: "Overdue",         dot: "bg-rose-400",   badge: "bg-rose-100 text-rose-700 border-rose-200",  row: "bg-rose-50/40",  icon: <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />  };
   if (t.includes("capacity") || t.includes("full"))
-    return { label: "Capacity warning", cardBg: "bg-amber-50", cardBorder: "border-amber-200", dotBg: "bg-amber-400", badgeCls: "bg-amber-100 text-amber-700 border-amber-200", icon: <AlertTriangle className="w-4 h-4 text-amber-500" /> };
+    return { label: "Capacity",        dot: "bg-amber-400",  badge: "bg-amber-100 text-amber-700 border-amber-200", row: "bg-amber-50/40",icon: <AlertTriangle className="w-3.5 h-3.5 text-amber-500" /> };
   if (t.includes("remind") || t.includes("day"))
-    return { label: "Reminder", cardBg: "bg-blue-50", cardBorder: "border-blue-200", dotBg: "bg-blue-400", badgeCls: "bg-blue-100 text-blue-700 border-blue-200", icon: <Clock className="w-4 h-4 text-blue-500" /> };
+    return { label: "Reminder",        dot: "bg-blue-400",   badge: "bg-blue-100 text-blue-700 border-blue-200",   row: "bg-blue-50/30",  icon: <Clock        className="w-3.5 h-3.5 text-blue-500" />   };
   if (t.includes("damage") || t.includes("note"))
-    return { label: "Damage note", cardBg: "bg-orange-50", cardBorder: "border-orange-200", dotBg: "bg-orange-400", badgeCls: "bg-orange-100 text-orange-700 border-orange-200", icon: <Info className="w-4 h-4 text-orange-500" /> };
-  return { label: type, cardBg: "bg-gray-50", cardBorder: "border-gray-200", dotBg: "bg-gray-300", badgeCls: "bg-gray-100 text-gray-600 border-gray-200", icon: <Bell className="w-4 h-4 text-gray-400" /> };
-}
-
-function isCritical(type: string) {
-  const t = type.toLowerCase();
-  return t.includes("mismatch") || t.includes("driver") || t.includes("overdue");
+    return { label: "Damage note",     dot: "bg-orange-400", badge: "bg-orange-100 text-orange-700 border-orange-200", row: "", icon: <Info className="w-3.5 h-3.5 text-orange-500" /> };
+  if (t.includes("receipt"))
+    return { label: "Receipt sent",    dot: "bg-emerald-400",badge: "bg-emerald-100 text-emerald-700 border-emerald-200", row: "", icon: <CheckCheck className="w-3.5 h-3.5 text-emerald-500" /> };
+  return   { label: type.replace(/_/g," "), dot: "bg-gray-300", badge: "bg-gray-100 text-gray-600 border-gray-200", row: "", icon: <Bell className="w-3.5 h-3.5 text-gray-400" /> };
 }
 
 function fmtTime(iso: string | null) {
   if (!iso) return "—";
-  const d = new Date(iso);
+  const d   = new Date(iso);
   const now = new Date();
   const diffDays = Math.floor((now.getTime() - d.getTime()) / 86400000);
   const time = d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
   if (diffDays === 0) return time;
-  const day = d.getDate();
-  const mon = d.toLocaleDateString("en-IN", { month: "short" });
-  return `${day} ${mon} ${time}`;
+  return `${d.getDate()} ${d.toLocaleDateString("en-IN", { month: "short" })} ${time}`;
 }
-
 function relTime(iso: string | null) {
   if (!iso) return "";
   const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -96,100 +78,70 @@ function relTime(iso: string | null) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-const selectCls = "w-full appearance-none bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition pr-9";
+const inputCls = "w-full px-3.5 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition";
 
-// ── main page ─────────────────────────────────────────────────────────────────
-export default function NoticesPage() {
-  const [active,     setActive]     = useState<Notice[]>([]);
-  const [activeErr,  setActiveErr]  = useState("");
-  const [log,        setLog]        = useState<Notice[]>([]);
-  const [logTotal,   setLogTotal]   = useState(0);
-  const [loadingA,   setLoadingA]   = useState(false);
-  const [loadingL,   setLoadingL]   = useState(false);
-  const [resolving,  setResolving]  = useState<string | null>(null);
-
-  // post notice form
-  const [alertTypes, setAlertTypes] = useState<AlertType[]>([]);
-  const [fTruck,     setFTruck]     = useState("");
-  const [fType,      setFType]      = useState("");
-  const [fMsg,       setFMsg]       = useState("");
-  const [fErr,       setFErr]       = useState("");
-  const [fBusy,      setFBusy]      = useState(false);
-  const [fOk,        setFOk]        = useState(false);
-
-  // enrichment caches
-  const truckCache = useRef<Record<string, TruckObj>>({});
-  const ownerCache = useRef<Record<string, Owner>>({});
-  const adminCache = useRef<Record<string, string>>({});
-
-  async function enrichNotices(notices: Notice[]): Promise<Notice[]> {
-    const truckIds  = [...new Set(notices.map(n => n.truck_id).filter(Boolean) as string[])].filter(id => !truckCache.current[id]);
-    const ownerIds  = [...new Set(notices.map(n => n.owner_id).filter(Boolean) as string[])].filter(id => !ownerCache.current[id]);
-    const adminIds  = [...new Set(notices.map(n => n.created_by).filter(Boolean) as string[])].filter(id => !adminCache.current[id]);
-
-    await Promise.allSettled([
-      ...truckIds.map(id => apiFetch<TruckObj>(`/trucks/${id}`).then(t => { truckCache.current[id] = t; }).catch(() => {})),
-      ...ownerIds.map(id => apiFetch<Owner>(`/owners/${id}`).then(o => { ownerCache.current[id] = o; }).catch(() => {})),
-      ...adminIds.map(id => apiFetch<AdminUser>(`/admin-users/${id}`).then(a => { adminCache.current[id] = a.name; }).catch(() => {})),
-    ]);
-
-    return notices.map(n => ({
-      ...n,
-      truck_number:    n.truck_id    ? truckCache.current[n.truck_id]?.truck_number : undefined,
-      owner_name:      n.owner_id    ? ownerCache.current[n.owner_id]?.name : undefined,
-      owner_mobile:    n.owner_id    ? ownerCache.current[n.owner_id]?.primary_mobile : undefined,
-      created_by_name: n.created_by  ? adminCache.current[n.created_by] : undefined,
-    }));
-  }
-
-  const fetchActive = useCallback(async () => {
-    setLoadingA(true); setActiveErr("");
-    try {
-      const data = await apiFetch<{ count: number; list: Notice[] }>(`/notices?status=open&sort_by=created_at&order=desc&limit=20`);
-      const enriched = await enrichNotices(data.list ?? []);
-      setActive(enriched);
-    } catch (e) { setActiveErr(e instanceof Error ? e.message : "Failed to load alerts."); }
-    finally { setLoadingA(false); }
-  }, []); // eslint-disable-line
-
-  const fetchLog = useCallback(async () => {
-    setLoadingL(true);
-    try {
-      const data = await apiFetch<{ count: number; list: Notice[] }>(`/notices?sort_by=created_at&order=desc&limit=50`);
-      setLogTotal(data.count ?? 0);
-      const enriched = await enrichNotices(data.list ?? []);
-      setLog(enriched);
-    } catch { /* silent */ }
-    finally { setLoadingL(false); }
-  }, []); // eslint-disable-line
-
+// ── Sweet-alert toast ─────────────────────────────────────────────────────────
+function SuccessToast({ onDone }: { onDone: () => void }) {
   useEffect(() => {
-    fetchActive();
-    fetchLog();
-    apiFetch<{ count: number; list: AlertType[] }>("/alert-types/all")
-      .then(r => { setAlertTypes(r.list ?? []); if (r.list?.length) setFType(r.list[0].code); })
-      .catch(() => {});
-    const interval = setInterval(() => { fetchActive(); fetchLog(); }, 30000);
-    return () => clearInterval(interval);
-  }, [fetchActive, fetchLog]);
+    const t = setTimeout(onDone, 2800);
+    return () => clearTimeout(t);
+  }, [onDone]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+      <div
+        className="bg-white rounded-3xl shadow-2xl px-10 py-8 flex flex-col items-center gap-4 pointer-events-auto"
+        style={{ animation: "swal-pop .35s cubic-bezier(.175,.885,.32,1.275) both" }}
+      >
+        {/* animated check circle */}
+        <div className="relative w-20 h-20">
+          <svg className="w-20 h-20" viewBox="0 0 80 80">
+            <circle cx="40" cy="40" r="36" fill="none" stroke="#e9fdf0" strokeWidth="8" />
+            <circle cx="40" cy="40" r="36" fill="none" stroke="#22c55e" strokeWidth="8"
+              strokeDasharray="226" strokeDashoffset="226"
+              style={{ animation: "swal-circle .5s .15s ease forwards" }}
+              strokeLinecap="round" transform="rotate(-90 40 40)" />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <svg viewBox="0 0 24 24" className="w-9 h-9 text-green-500"
+              style={{ animation: "swal-check .3s .55s ease both", opacity: 0 }}>
+              <polyline points="4,13 9,18 20,7" fill="none" stroke="currentColor"
+                strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+        </div>
+        <div className="text-center">
+          <p className="text-xl font-bold text-gray-900">Notice Created!</p>
+          <p className="text-sm text-gray-400 mt-1">Your notice has been posted successfully.</p>
+        </div>
+      </div>
+      <style>{`
+        @keyframes swal-pop  { from { opacity:0; transform:scale(.6) } to { opacity:1; transform:scale(1) } }
+        @keyframes swal-circle { to { stroke-dashoffset:0 } }
+        @keyframes swal-check  { from { opacity:0; transform:scale(.5) } to { opacity:1; transform:scale(1) } }
+      `}</style>
+    </div>
+  );
+}
 
-  async function handleResolve(notice: Notice) {
-    setResolving(notice.id);
-    try {
-      await apiFetch(`/notices/${notice.id}`, {
-        method: "PUT",
-        body: JSON.stringify({ notice_type: notice.notice_type, status: "resolved", resolved_at: new Date().toISOString() }),
-      });
-      setActive(prev => prev.filter(n => n.id !== notice.id));
-      fetchLog();
-    } catch { /* silent */ }
-    finally { setResolving(null); }
-  }
+// ── Add Notice Modal ──────────────────────────────────────────────────────────
+function AddNoticeModal({
+  alertTypes, onClose, onSuccess,
+}: {
+  alertTypes: AlertType[];
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [fTruck, setFTruck] = useState("");
+  const [fType,  setFType]  = useState(alertTypes[0]?.code ?? "");
+  const [fMsg,   setFMsg]   = useState("");
+  const [fErr,   setFErr]   = useState("");
+  const [fBusy,  setFBusy]  = useState(false);
+  const truckCache = useRef<Record<string, TruckObj>>({});
 
-  async function handlePost(e: { preventDefault(): void }) {
+  async function handlePost(e: React.FormEvent) {
     e.preventDefault();
     if (!fType) { setFErr("Select a notice type."); return; }
-    setFBusy(true); setFErr(""); setFOk(false);
+    setFBusy(true); setFErr("");
     try {
       let truck_id: string | null = null;
       if (fTruck.trim()) {
@@ -201,262 +153,471 @@ export default function NoticesPage() {
         method: "POST",
         body: JSON.stringify({ notice_type: fType, message: fMsg.trim() || null, truck_id, status: "open" }),
       });
-      setFTruck(""); setFMsg(""); setFOk(true);
-      setTimeout(() => setFOk(false), 3000);
-      fetchActive(); fetchLog();
-    } catch (err) { setFErr(err instanceof Error ? err.message : "Failed to post notice."); }
-    finally { setFBusy(false); }
+      onSuccess();
+    } catch (err) {
+      setFErr(err instanceof Error ? err.message : "Failed to post notice.");
+      setFBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+      {/* backdrop */}
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      {/* modal card */}
+      <div
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md"
+        style={{ animation: "modal-in .25s ease both" }}
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center">
+              <Plus className="w-4 h-4 text-blue-600" />
+            </div>
+            <p className="text-sm font-bold text-gray-900">Post a notice</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handlePost} className="px-6 py-5 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Truck number</label>
+            <div className="relative">
+              <Truck className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+              <input value={fTruck} onChange={e => setFTruck(e.target.value.toUpperCase())}
+                placeholder="e.g. GJ11AB1234"
+                className={inputCls + " pl-9 font-mono"} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+              Notice type <span className="text-red-400">*</span>
+            </label>
+            <div className="relative">
+              <select value={fType} onChange={e => { setFType(e.target.value); setFErr(""); }}
+                className={inputCls + " appearance-none pr-9 cursor-pointer"}>
+                <option value="">Select type…</option>
+                {alertTypes.map(at => (
+                  <option key={at.id} value={at.code}>{at.name ?? at.code}</option>
+                ))}
+                {alertTypes.length === 0 && (
+                  <>
+                    <option value="general_reminder">General reminder</option>
+                    <option value="damage_note">Damage note</option>
+                    <option value="overdue">Overdue</option>
+                    <option value="capacity_warning">Capacity warning</option>
+                  </>
+                )}
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Notice details</label>
+            <textarea value={fMsg} onChange={e => setFMsg(e.target.value)} rows={3}
+              placeholder="Notice details…"
+              className={inputCls + " resize-none"} />
+          </div>
+
+          {fErr && (
+            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5">
+              <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+              <p className="text-sm text-red-700">{fErr}</p>
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition">
+              Cancel
+            </button>
+            <button type="submit" disabled={fBusy}
+              className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold py-2.5 rounded-xl shadow-sm shadow-blue-200 transition text-sm">
+              {fBusy ? <><Loader2 className="w-4 h-4 animate-spin" />Posting…</> : "Post notice"}
+            </button>
+          </div>
+        </form>
+      </div>
+      <style>{`
+        @keyframes modal-in { from { opacity:0; transform:translateY(16px) scale(.97) } to { opacity:1; transform:none } }
+      `}</style>
+    </div>
+  );
+}
+
+// ── main page ─────────────────────────────────────────────────────────────────
+export default function NoticesPage() {
+  const [active,    setActive]    = useState<Notice[]>([]);
+  const [activeErr, setActiveErr] = useState("");
+  const [log,       setLog]       = useState<Notice[]>([]);
+  const [logTotal,  setLogTotal]  = useState(0);
+  const [loadingA,  setLoadingA]  = useState(false);
+  const [loadingL,  setLoadingL]  = useState(false);
+  const [resolving, setResolving] = useState<string | null>(null);
+  const [alertTypes,setAlertTypes]= useState<AlertType[]>([]);
+  const [showModal, setShowModal] = useState(false);
+  const [showToast, setShowToast] = useState(false);
+  const [page,      setPage]      = useState(1);
+  const pageRef = useRef(1);
+
+  const truckCache = useRef<Record<string, TruckObj>>({});
+  const ownerCache = useRef<Record<string, Owner>>({});
+  const adminCache = useRef<Record<string, string>>({});
+
+  async function enrichNotices(notices: Notice[]): Promise<Notice[]> {
+    const truckIds = [...new Set(notices.map(n => n.truck_id).filter(Boolean) as string[])].filter(id => !truckCache.current[id]);
+    const ownerIds = [...new Set(notices.map(n => n.owner_id).filter(Boolean) as string[])].filter(id => !ownerCache.current[id]);
+    const adminIds = [...new Set(notices.map(n => n.created_by).filter(Boolean) as string[])].filter(id => !adminCache.current[id]);
+    await Promise.allSettled([
+      ...truckIds.map(id => apiFetch<TruckObj>(`/trucks/${id}`).then(t => { truckCache.current[id] = t; }).catch(() => {})),
+      ...ownerIds.map(id => apiFetch<Owner>(`/owners/${id}`).then(o => { ownerCache.current[id] = o; }).catch(() => {})),
+      ...adminIds.map(id => apiFetch<AdminUser>(`/admin-users/${id}`).then(a => { adminCache.current[id] = a.name; }).catch(() => {})),
+    ]);
+    return notices.map(n => ({
+      ...n,
+      truck_number:    n.truck_id   ? truckCache.current[n.truck_id]?.truck_number : undefined,
+      owner_name:      n.owner_id   ? ownerCache.current[n.owner_id]?.name : undefined,
+      owner_mobile:    n.owner_id   ? ownerCache.current[n.owner_id]?.primary_mobile : undefined,
+      created_by_name: n.created_by ? adminCache.current[n.created_by] : undefined,
+    }));
+  }
+
+  const fetchActive = useCallback(async () => {
+    setLoadingA(true); setActiveErr("");
+    try {
+      const data = await apiFetch<{ count: number; list: Notice[] }>(`/notices?status=open&sort_by=created_at&order=desc&limit=20`);
+      setActive(await enrichNotices(data.list ?? []));
+    } catch (e) { setActiveErr(e instanceof Error ? e.message : "Failed to load alerts."); }
+    finally { setLoadingA(false); }
+  }, []); // eslint-disable-line
+
+  const fetchLog = useCallback(async (pageNum = 1) => {
+    setLoadingL(true);
+    try {
+      const start = (pageNum - 1) * PER_PAGE;
+      const data = await apiFetch<{ count: number; list: Notice[] }>(
+        `/notices?sort_by=created_at&order=desc&start=${start}&limit=${PER_PAGE}`
+      );
+      setLogTotal(data.count ?? 0);
+      setLog(await enrichNotices(data.list ?? []));
+    } catch { /* silent */ }
+    finally { setLoadingL(false); }
+  }, []); // eslint-disable-line
+
+  useEffect(() => {
+    fetchActive(); fetchLog(1);
+    apiFetch<{ count: number; list: AlertType[] }>("/alert-types/all")
+      .then(r => setAlertTypes(r.list ?? []))
+      .catch(() => {});
+    const id = setInterval(() => { fetchActive(); fetchLog(pageRef.current); }, 30_000);
+    return () => clearInterval(id);
+  }, [fetchActive, fetchLog]);
+
+  function goToPage(p: number) {
+    setPage(p);
+    pageRef.current = p;
+    fetchLog(p);
+  }
+
+  async function handleResolve(notice: Notice) {
+    setResolving(notice.id);
+    try {
+      await apiFetch(`/notices/${notice.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ notice_type: notice.notice_type, status: "resolved", resolved_at: new Date().toISOString() }),
+      });
+      setActive(prev => prev.filter(n => n.id !== notice.id));
+      fetchLog(pageRef.current);
+    } catch { /* silent */ }
+    finally { setResolving(null); }
+  }
+
+  function handleSuccess() {
+    setShowModal(false);
+    setShowToast(true);
+    goToPage(1);
+    fetchActive();
   }
 
   return (
     <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto space-y-5">
 
-      {/* header */}
+      {/* ── header ── */}
       <div>
         <div className="flex items-center gap-2 text-xs text-gray-400 mb-2">
           <Link href="/dashboard" className="hover:text-blue-600 transition">Dashboard</Link>
           <ChevronRight className="w-3 h-3" />
           <span className="text-gray-600 font-medium">Notices</span>
         </div>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Notices &amp; alerts</h1>
             <p className="text-sm text-gray-400 mt-0.5">System alerts, owner communications, and operator notes.</p>
           </div>
-          <button onClick={() => { fetchActive(); fetchLog(); }} disabled={loadingA}
-            className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 bg-white border border-gray-200 px-3 py-2 rounded-xl shadow-sm hover:bg-gray-50 transition">
-            <RefreshCw className={`w-3.5 h-3.5 ${loadingA ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={() => { fetchActive(); goToPage(1); }} disabled={loadingA || loadingL}
+              className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 bg-white border border-gray-200 px-3 py-2 rounded-xl shadow-sm hover:bg-gray-50 transition">
+              <RefreshCw className={`w-3.5 h-3.5 ${(loadingA || loadingL) ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+            <button onClick={() => setShowModal(true)}
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold px-4 py-2 rounded-xl shadow-sm shadow-blue-200 transition">
+              <Plus className="w-4 h-4" />
+              Add notice
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* two-column */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
-
-        {/* ── left: active alerts + post form ── */}
-        <div className="lg:col-span-3 space-y-4">
-
-          {/* active alerts */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-bold text-gray-900">Active alerts</p>
-                {active.length > 0 && (
-                  <span className="text-xs font-bold bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded-full">
-                    {active.length} open
-                  </span>
-                )}
-              </div>
-              {loadingA && <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />}
-            </div>
-
-            {activeErr && (
-              <div className="flex items-center gap-2 mx-4 my-3 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
-                <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-                <p className="text-sm text-red-700">{activeErr}</p>
-              </div>
-            )}
-
-            {!loadingA && active.length === 0 && !activeErr && (
-              <div className="px-5 py-12 text-center">
-                <div className="w-12 h-12 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
-                  <CheckCircle2 className="w-6 h-6 text-emerald-500" />
-                </div>
-                <p className="text-sm font-semibold text-gray-500">All clear</p>
-                <p className="text-xs text-gray-400 mt-1">No open alerts right now.</p>
-              </div>
-            )}
-
-            <div className="divide-y divide-gray-100">
-              {active.map(notice => {
-                const cfg = noticeConfig(notice.notice_type);
-                const crit = isCritical(notice.notice_type);
-                return (
-                  <div key={notice.id} className={`px-5 py-4 ${cfg.cardBg} border-l-4 ${cfg.cardBorder}`}>
-                    <div className="flex items-start gap-3">
-                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${cfg.cardBg}`}>
-                        {cfg.icon}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-bold text-gray-900">
-                            {cfg.label}
-                            {notice.truck_number && (
-                              <> <span className="text-gray-400">—</span> <span className="font-mono text-blue-600">{notice.truck_number}</span></>
-                            )}
-                          </p>
-                          <span className="text-xs text-gray-400">{relTime(notice.created_at)}</span>
-                        </div>
-                        {notice.message && (
-                          <p className="text-sm text-gray-600 mt-0.5 leading-snug">{notice.message}</p>
-                        )}
-                        {(notice.owner_name || notice.owner_mobile) && (
-                          <p className="text-xs text-gray-500 mt-1">
-                            {notice.owner_name}
-                            {notice.owner_mobile && (
-                              <> · <span className="font-mono">+91 {notice.owner_mobile.slice(-10)}</span></>
-                            )}
-                          </p>
-                        )}
-                        <div className="flex items-center gap-2 mt-2.5 flex-wrap">
-                          {crit && (
-                            <button onClick={() => handleResolve(notice)} disabled={resolving === notice.id}
-                              className="flex items-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:bg-red-300 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition shadow-sm">
-                              {resolving === notice.id
-                                ? <><Loader2 className="w-3 h-3 animate-spin" />Resolving…</>
-                                : <><CheckCircle2 className="w-3 h-3" />Resolve now</>}
-                            </button>
-                          )}
-                          {notice.owner_mobile && (
-                            <a href={`tel:${notice.owner_mobile}`}
-                              className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition shadow-sm">
-                              <Phone className="w-3 h-3" />Call owner
-                            </a>
-                          )}
-                          {!crit && (
-                            <button onClick={() => handleResolve(notice)} disabled={resolving === notice.id}
-                              className="flex items-center gap-1.5 text-gray-500 hover:text-gray-800 text-xs font-semibold bg-white border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition">
-                              {resolving === notice.id
-                                ? <Loader2 className="w-3 h-3 animate-spin" />
-                                : <X className="w-3 h-3" />}
-                              Dismiss
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* post a notice */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-            <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100">
-              <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center shrink-0">
-                <Plus className="w-4 h-4 text-blue-600" />
-              </div>
-              <p className="text-sm font-bold text-gray-900">Post a notice</p>
-            </div>
-            <form onSubmit={handlePost} className="px-5 py-5 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5">Truck number</label>
-                <div className="relative">
-                  <Truck className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
-                  <input value={fTruck} onChange={e => setFTruck(e.target.value.toUpperCase())}
-                    placeholder="e.g. GJ11AB1234"
-                    className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition font-mono" />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-                  Notice type <span className="text-red-400">*</span>
-                </label>
-                <div className="relative">
-                  <select value={fType} onChange={e => { setFType(e.target.value); setFErr(""); }} className={selectCls}>
-                    <option value="">Select type…</option>
-                    {alertTypes.map(at => (
-                      <option key={at.id} value={at.code}>{at.name ?? at.code}</option>
-                    ))}
-                    {alertTypes.length === 0 && (
-                      <>
-                        <option value="general_reminder">General reminder</option>
-                        <option value="damage_note">Damage note</option>
-                        <option value="overdue">Overdue</option>
-                        <option value="capacity_warning">Capacity warning</option>
-                      </>
-                    )}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5">Notice details</label>
-                <textarea value={fMsg} onChange={e => setFMsg(e.target.value)} rows={3}
-                  placeholder="Notice details..."
-                  className="w-full px-3.5 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition resize-none" />
-              </div>
-
-              {fErr && (
-                <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5">
-                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-                  <p className="text-sm text-red-700">{fErr}</p>
-                </div>
-              )}
-              {fOk && (
-                <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <p className="text-sm text-emerald-700 font-semibold">Notice posted successfully.</p>
-                </div>
-              )}
-
-              <button type="submit" disabled={fBusy}
-                className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-blue-300 text-white font-bold py-3 rounded-xl shadow-sm shadow-blue-200 transition text-sm">
-                {fBusy ? <><Loader2 className="w-4 h-4 animate-spin" />Posting…</> : "Post notice"}
-              </button>
-            </form>
-          </div>
-        </div>
-
-        {/* ── right: all notices log ── */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-            <p className="text-sm font-bold text-gray-900">All notices log</p>
+      {/* ── active alerts banner ── */}
+      {(active.length > 0 || loadingA || activeErr) && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
             <div className="flex items-center gap-2">
-              {logTotal > 0 && (
-                <span className="text-xs text-gray-400 font-medium">{logTotal} total</span>
+              <p className="text-sm font-bold text-gray-900">Active alerts</p>
+              {active.length > 0 && (
+                <span className="text-xs font-bold bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded-full">
+                  {active.length} open
+                </span>
               )}
-              {loadingL && <Loader2 className="w-3.5 h-3.5 text-gray-400 animate-spin" />}
             </div>
+            {loadingA && <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />}
           </div>
 
-          {!loadingL && log.length === 0 && (
-            <div className="px-5 py-12 text-center">
-              <BellOff className="w-8 h-8 text-gray-200 mx-auto mb-2" />
-              <p className="text-sm text-gray-400">No notices yet.</p>
+          {activeErr && (
+            <div className="flex items-center gap-2 mx-4 my-3 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
+              <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+              <p className="text-sm text-red-700">{activeErr}</p>
             </div>
           )}
 
-          <div className="divide-y divide-gray-50 max-h-[640px] overflow-y-auto">
-            {log.map(notice => {
-              const cfg = noticeConfig(notice.notice_type);
-              const isOpen = notice.status === "open";
-              const byLabel = notice.is_system ? "System" : (notice.created_by_name ?? "Operator");
+          <div className="divide-y divide-gray-100">
+            {active.map(notice => {
+              const cfg  = noticeConfig(notice.notice_type);
+              const crit = ["mismatch","driver","overdue"].some(k => notice.notice_type.toLowerCase().includes(k));
               return (
-                <div key={notice.id} className={`flex items-start gap-3 px-4 py-3 hover:bg-gray-50/60 transition-colors ${isOpen ? cfg.cardBg + "/30" : ""}`}>
-                  <div className={`w-2 h-2 rounded-full shrink-0 mt-2 ${isOpen ? cfg.dotBg : "bg-gray-200"}`} />
+                <div key={notice.id} className="flex items-start gap-3 px-5 py-3.5">
+                  <div className="mt-0.5 shrink-0">{cfg.icon}</div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-gray-800 leading-snug truncate">
-                          {notice.truck_number
-                            ? <span className="font-mono text-blue-600 mr-1">{notice.truck_number}</span>
-                            : null}
-                          <span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded border ${cfg.badgeCls}`}>
-                            {cfg.label}
-                          </span>
-                        </p>
-                        {notice.message && (
-                          <p className="text-xs text-gray-500 mt-0.5 leading-snug line-clamp-2">{notice.message}</p>
-                        )}
-                        <p className="text-[11px] text-gray-400 mt-0.5">{byLabel}</p>
-                      </div>
-                      <span className="text-[11px] text-gray-400 whitespace-nowrap shrink-0 font-mono">
-                        {fmtTime(notice.created_at)}
-                      </span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${cfg.badge}`}>{cfg.label}</span>
+                      {notice.truck_number && (
+                        <span className="text-xs font-mono font-bold text-blue-600">{notice.truck_number}</span>
+                      )}
+                      <span className="text-xs text-gray-400">{relTime(notice.created_at)}</span>
                     </div>
+                    {notice.message && <p className="text-sm text-gray-600 mt-0.5">{notice.message}</p>}
+                    {(notice.owner_name || notice.owner_mobile) && (
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {notice.owner_name}{notice.owner_mobile && <> · +91 {notice.owner_mobile.slice(-10)}</>}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {notice.owner_mobile && (
+                      <a href={`tel:${notice.owner_mobile}`}
+                        className="flex items-center gap-1 bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg transition">
+                        <Phone className="w-3 h-3" />Call
+                      </a>
+                    )}
+                    <button onClick={() => handleResolve(notice)} disabled={resolving === notice.id}
+                      className={`flex items-center gap-1 text-xs font-bold px-2.5 py-1.5 rounded-lg transition ${
+                        crit
+                          ? "bg-red-500 hover:bg-red-600 disabled:bg-red-300 text-white"
+                          : "bg-white border border-gray-200 hover:bg-gray-50 text-gray-600"
+                      }`}>
+                      {resolving === notice.id
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : crit ? <><CheckCircle2 className="w-3 h-3" />Resolve</> : <><X className="w-3 h-3" />Dismiss</>}
+                    </button>
                   </div>
                 </div>
               );
             })}
           </div>
         </div>
+      )}
 
+      {/* ── all notices table ── */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-bold text-gray-900">All notices log</p>
+            {logTotal > 0 && (
+              <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full font-medium">{logTotal} total</span>
+            )}
+          </div>
+          {loadingL && <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />}
+        </div>
+
+        {!loadingL && log.length === 0 ? (
+          <div className="py-16 text-center">
+            <BellOff className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+            <p className="text-sm text-gray-400">No notices yet.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50/70">
+                  <th className="text-left text-xs font-semibold text-gray-500 px-5 py-3">Truck No.</th>
+                  <th className="text-left text-xs font-semibold text-gray-500 px-4 py-3">Type</th>
+                  <th className="text-left text-xs font-semibold text-gray-500 px-4 py-3">Message</th>
+                  <th className="text-left text-xs font-semibold text-gray-500 px-4 py-3">Status</th>
+                  <th className="text-left text-xs font-semibold text-gray-500 px-4 py-3">Owner</th>
+                  <th className="text-left text-xs font-semibold text-gray-500 px-4 py-3">Posted by</th>
+                  <th className="text-left text-xs font-semibold text-gray-500 px-4 py-3">Time</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {log.map(notice => {
+                  const cfg    = noticeConfig(notice.notice_type);
+                  const isOpen = notice.status === "open";
+                  const byLabel = notice.is_system ? "System" : (notice.created_by_name ?? "Operator");
+                  return (
+                    <tr key={notice.id} className={`hover:bg-gray-50/60 transition-colors ${isOpen ? cfg.row : ""}`}>
+                      {/* truck */}
+                      <td className="px-5 py-3">
+                        {notice.truck_number ? (
+                          <Link
+                            href={`/dashboard/trucks/profile?truck=${encodeURIComponent(notice.truck_number)}`}
+                            className="font-mono text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline"
+                          >
+                            {notice.truck_number}
+                          </Link>
+                        ) : <span className="text-gray-300 text-xs">—</span>}
+                      </td>
+                      {/* type */}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          {cfg.icon}
+                          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${cfg.badge}`}>
+                            {cfg.label}
+                          </span>
+                        </div>
+                      </td>
+                      {/* message */}
+                      <td className="px-4 py-3 max-w-[260px]">
+                        {notice.message
+                          ? <p className="text-xs text-gray-600 truncate" title={notice.message}>{notice.message}</p>
+                          : <span className="text-gray-300 text-xs">—</span>}
+                      </td>
+                      {/* status */}
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                          isOpen
+                            ? "bg-rose-100 text-rose-700"
+                            : "bg-emerald-100 text-emerald-700"
+                        }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${isOpen ? "bg-rose-500" : "bg-emerald-500"}`} />
+                          {isOpen ? "Open" : "Resolved"}
+                        </span>
+                      </td>
+                      {/* owner */}
+                      <td className="px-4 py-3">
+                        {notice.owner_name ? (
+                          <div>
+                            <p className="text-xs font-medium text-gray-700">{notice.owner_name}</p>
+                            {notice.owner_mobile && (
+                              <p className="text-[11px] text-gray-400 font-mono">+91 {notice.owner_mobile.slice(-10)}</p>
+                            )}
+                          </div>
+                        ) : <span className="text-gray-300 text-xs">—</span>}
+                      </td>
+                      {/* posted by */}
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-gray-500">{byLabel}</span>
+                      </td>
+                      {/* time */}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className="text-xs font-mono text-gray-400">{fmtTime(notice.created_at)}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* ── pagination bar ── */}
+        {logTotal > PER_PAGE && (() => {
+          const totalPages = Math.ceil(logTotal / PER_PAGE);
+          const from = (page - 1) * PER_PAGE + 1;
+          const to   = Math.min(page * PER_PAGE, logTotal);
+
+          // build page number list: show first, last, current±1, with "…" gaps
+          const pages: (number | "…")[] = [];
+          for (let i = 1; i <= totalPages; i++) {
+            if (i === 1 || i === totalPages || (i >= page - 1 && i <= page + 1)) {
+              pages.push(i);
+            } else if (pages[pages.length - 1] !== "…") {
+              pages.push("…");
+            }
+          }
+
+          return (
+            <div className="flex items-center justify-between px-5 py-3.5 border-t border-gray-100 bg-gray-50/50">
+              <p className="text-xs text-gray-400">
+                Showing <span className="font-semibold text-gray-700">{from}–{to}</span> of{" "}
+                <span className="font-semibold text-gray-700">{logTotal}</span> notices
+              </p>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => goToPage(page - 1)}
+                  disabled={page === 1 || loadingL}
+                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  Prev
+                </button>
+                {pages.map((p, i) =>
+                  p === "…" ? (
+                    <span key={`ellipsis-${i}`} className="px-2 text-xs text-gray-400">…</span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => goToPage(p as number)}
+                      disabled={loadingL}
+                      className={`w-8 h-8 text-xs font-semibold rounded-lg transition ${
+                        p === page
+                          ? "bg-blue-600 text-white shadow-sm shadow-blue-200"
+                          : "text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  )
+                )}
+                <button
+                  onClick={() => goToPage(page + 1)}
+                  disabled={page === totalPages || loadingL}
+                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  Next
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
+
+      {/* ── modal ── */}
+      {showModal && (
+        <AddNoticeModal
+          alertTypes={alertTypes}
+          onClose={() => setShowModal(false)}
+          onSuccess={handleSuccess}
+        />
+      )}
+
+      {/* ── success toast ── */}
+      {showToast && <SuccessToast onDone={() => setShowToast(false)} />}
     </div>
   );
 }
