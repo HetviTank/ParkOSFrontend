@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -13,7 +13,7 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell,
 } from "recharts";
 import type {
-  DashboardResponse, DivisionOccupancyItem, SlotMapDivision,
+  DashboardResponse, SlotMapDivision,
   WeeklyRevenueItem, PaymentSplit, LiveAlertItem,
 } from "@/types/dashboard";
 
@@ -54,14 +54,38 @@ function dateLabel() {
   });
 }
 
+// ── animated number (count-up) ────────────────────────────────────────────────
+function useCountUp(target: number, duration = 900) {
+  const [val, setVal] = useState(0);
+  const fromRef = useRef(0);
+  useEffect(() => {
+    const from = fromRef.current;
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setVal(from + (target - from) * eased);
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else fromRef.current = target;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration]);
+  return val;
+}
+
+function AnimatedNumber({ value, format }: { value: number; format: (n: number) => string }) {
+  const v = useCountUp(value);
+  return <>{format(v)}</>;
+}
+
 // ── slot / alert styling ──────────────────────────────────────────────────────
 const SLOT_STYLE: Record<string, { bg: string; border: string; text: string }> = {
   free:     { bg: "bg-emerald-50",  border: "border-emerald-300", text: "text-emerald-700" },
   occupied: { bg: "bg-rose-50",     border: "border-rose-300",    text: "text-rose-600"    },
   reserved: { bg: "bg-amber-50",    border: "border-amber-300",   text: "text-amber-700"   },
 };
-
-const CHART = { cash: "#3b82f6", card: "#10b981" };
 
 // ── main page ────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
@@ -163,13 +187,20 @@ export default function DashboardPage() {
   }, [fetchData, fetchOverdueTrucks]);
 
   return (
-    <main className="px-4 sm:px-6 py-6 space-y-5 max-w-screen-2xl mx-auto">
+    <main className="relative px-4 sm:px-6 py-6 space-y-5 max-w-screen-2xl mx-auto">
+
+        {/* Ambient animated background */}
+        <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+          <div className="absolute -top-40 -left-24 w-[28rem] h-[28rem] rounded-full bg-indigo-300/30 blur-3xl animate-blob" />
+          <div className="absolute top-10 -right-24 w-[26rem] h-[26rem] rounded-full bg-sky-300/30 blur-3xl animate-blob" style={{ animationDelay: "2s" }} />
+          <div className="absolute -bottom-40 left-1/3 w-[30rem] h-[30rem] rounded-full bg-violet-300/30 blur-3xl animate-blob" style={{ animationDelay: "4s" }} />
+        </div>
 
         {/* Greeting */}
         {user && (
-          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-1">
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-1 animate-fade-in-up">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">{greet()}, {user.name} 👋</h1>
+              <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-900 via-indigo-800 to-violet-700 bg-clip-text text-transparent">{greet()}, {user.name} 👋</h1>
               <p className="text-sm text-gray-400 mt-0.5">{dateLabel()} · live as of {clock}</p>
             </div>
             {lastUpdated && (
@@ -203,41 +234,49 @@ export default function DashboardPage() {
             {/* ── KPIs ── */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
               <KPICard
+                style={{ animationDelay: "0ms" }}
                 label="Total Slots"
-                value={data.kpis.total_slots.toString()}
+                value={<AnimatedNumber value={data.kpis.total_slots} format={(n) => Math.round(n).toString()} />}
                 sub={`${data.kpis.total_divisions} division${data.kpis.total_divisions !== 1 ? "s" : ""}`}
                 icon={<Layers className="w-5 h-5 text-blue-600" />}
                 iconBg="bg-blue-100"
                 accentColor="border-l-blue-500"
+                glow="hover:shadow-blue-200/60"
               />
               <KPICard
+                style={{ animationDelay: "80ms" }}
                 label="Occupied"
-                value={data.kpis.occupied_slots.toString()}
+                value={<AnimatedNumber value={data.kpis.occupied_slots} format={(n) => Math.round(n).toString()} />}
                 sub={`${data.kpis.occupancy_percent.toFixed(0)}% of capacity`}
                 subColor={data.kpis.occupancy_percent >= 80 ? "text-rose-500" : "text-amber-500"}
                 icon={<BarChart2 className="w-5 h-5 text-rose-500" />}
                 iconBg="bg-rose-100"
                 accentColor="border-l-rose-500"
+                glow="hover:shadow-rose-200/60"
               />
               <KPICard
+                style={{ animationDelay: "160ms" }}
                 label="Today's Check-ins"
-                value={data.kpis.today_checkins.toString()}
+                value={<AnimatedNumber value={data.kpis.today_checkins} format={(n) => Math.round(n).toString()} />}
                 sub={`${data.kpis.checkins_diff >= 0 ? "+" : ""}${data.kpis.checkins_diff} vs yesterday`}
                 subColor={data.kpis.checkins_diff > 0 ? "text-emerald-600" : data.kpis.checkins_diff < 0 ? "text-rose-500" : "text-gray-400"}
                 subIcon={data.kpis.checkins_diff > 0 ? "up" : data.kpis.checkins_diff < 0 ? "down" : undefined}
                 icon={<Activity className="w-5 h-5 text-emerald-600" />}
                 iconBg="bg-emerald-100"
                 accentColor="border-l-emerald-500"
+                glow="hover:shadow-emerald-200/60"
               />
               <KPICard
+                style={{ animationDelay: "240ms" }}
                 label="Today's Revenue"
-                value={fmt(data.kpis.today_revenue)}
+                value={<AnimatedNumber value={data.kpis.today_revenue} format={fmt} />}
                 sub={`${data.kpis.revenue_growth_percent >= 0 ? "+" : ""}${data.kpis.revenue_growth_percent.toFixed(1)}% vs yesterday`}
                 subColor={data.kpis.revenue_growth_percent > 0 ? "text-emerald-600" : data.kpis.revenue_growth_percent < 0 ? "text-rose-500" : "text-gray-400"}
                 subIcon={data.kpis.revenue_growth_percent > 0 ? "up" : data.kpis.revenue_growth_percent < 0 ? "down" : undefined}
                 icon={<CreditCard className="w-5 h-5 text-amber-600" />}
                 iconBg="bg-amber-100"
                 accentColor="border-l-amber-500"
+                glow="hover:shadow-amber-200/60"
               />
             </div>
 
@@ -246,8 +285,7 @@ export default function DashboardPage() {
               <div className="lg:col-span-3">
                 <SlotMapCard divisions={data.slot_map} />
               </div>
-              <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 lg:flex lg:flex-col lg:h-[460px] gap-4">
-                <DivisionOccupancyCard items={data.division_occupancy} />
+              <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 lg:flex lg:flex-col lg:h-[580px] gap-4">
                 <OverdueTrucksCard trucks={overdueTrucks} loading={overdueLoading} rulesConfigured={overdueRules.length > 0} />
                 <LiveAlertsCard alerts={data.live_alerts} />
               </div>
@@ -271,18 +309,21 @@ export default function DashboardPage() {
 // ── KPI Card ──────────────────────────────────────────────────────────────────
 function KPICard({
   label, value, sub, subColor = "text-gray-400", subIcon,
-  icon, iconBg, accentColor,
+  icon, iconBg, accentColor, glow, style,
 }: {
-  label: string; value: string; sub?: string; subColor?: string; subIcon?: "up" | "down";
-  icon: React.ReactNode; iconBg: string; accentColor: string;
+  label: string; value: React.ReactNode; sub?: string; subColor?: string; subIcon?: "up" | "down";
+  icon: React.ReactNode; iconBg: string; accentColor: string; glow: string; style?: React.CSSProperties;
 }) {
   return (
-    <div className={`bg-white rounded-2xl p-5 border border-gray-100 shadow-sm border-l-4 ${accentColor}`}>
+    <div
+      style={style}
+      className={`group relative bg-white/80 backdrop-blur-sm rounded-2xl p-5 border border-gray-100 shadow-sm border-l-4 ${accentColor} animate-fade-in-up transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl ${glow}`}
+    >
       <div className="flex items-start justify-between mb-3">
         <p className="text-sm font-medium text-gray-500">{label}</p>
-        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${iconBg}`}>{icon}</div>
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${iconBg} transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6`}>{icon}</div>
       </div>
-      <p className="text-3xl font-bold text-gray-900 tracking-tight">{value}</p>
+      <p className="text-3xl font-bold text-gray-900 tracking-tight tabular-nums">{value}</p>
       {sub && (
         <div className={`flex items-center gap-1 mt-2 text-sm font-medium ${subColor}`}>
           {subIcon === "up"   && <TrendingUp  className="w-3.5 h-3.5" />}
@@ -297,9 +338,15 @@ function KPICard({
 // ── Slot Map ──────────────────────────────────────────────────────────────────
 function SlotMapCard({ divisions }: { divisions: SlotMapDivision[] }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col h-[460px]">
+    <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col h-[580px] animate-fade-in-up" style={{ animationDelay: "320ms" }}>
       <div className="flex items-center justify-between mb-4 shrink-0">
-        <h2 className="font-semibold text-gray-900">Live Slot Map</h2>
+        <div className="flex items-center gap-2">
+          <span className="relative flex h-2.5 w-2.5">
+            <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+          </span>
+          <h2 className="font-semibold text-gray-900">Live Slot Map</h2>
+        </div>
         <div className="flex items-center gap-3 text-xs text-gray-500">
           {(["free", "occupied", "reserved"] as const).map((s) => (
             <span key={s} className="flex items-center gap-1 capitalize">
@@ -322,7 +369,8 @@ function SlotMapCard({ divisions }: { divisions: SlotMapDivision[] }) {
                 return (
                   <div
                     key={slot.id}
-                    className={`${s.bg} ${s.border} ${s.text} border rounded-lg py-1.5 text-center text-xs font-semibold tracking-wide select-none`}
+                    title={`${slot.code} · ${slot.status}`}
+                    className={`${s.bg} ${s.border} ${s.text} border rounded-lg py-1.5 text-center text-xs font-semibold tracking-wide select-none cursor-default transition-all duration-200 hover:scale-110 hover:shadow-md hover:z-10 hover:relative`}
                   >
                     {slot.code}
                   </div>
@@ -339,48 +387,6 @@ function SlotMapCard({ divisions }: { divisions: SlotMapDivision[] }) {
   );
 }
 
-// ── Division Occupancy ────────────────────────────────────────────────────────
-function DivisionOccupancyCard({ items }: { items: DivisionOccupancyItem[] }) {
-  return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 shrink-0">
-      <h2 className="font-semibold text-gray-900 mb-4">Division Occupancy</h2>
-      <div className="space-y-4 overflow-y-auto max-h-[220px] pr-1">
-        {items.map((item) => {
-          const pct = item.occupancy_percent;
-          const barColor =
-            pct >= 85 ? "bg-rose-500" :
-            pct >= 60 ? "bg-amber-400" :
-            "bg-emerald-500";
-          return (
-            <div key={item.division_id}>
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-sm font-medium text-gray-800 truncate">{item.division_name}</span>
-                  <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full shrink-0">
-                    {item.truck_type}
-                  </span>
-                </div>
-                <span className="text-sm font-semibold text-gray-700 shrink-0 ml-2">
-                  {item.occupied_slots}
-                  <span className="text-gray-400 font-normal">/{item.total_slots}</span>
-                </span>
-              </div>
-              <div className="w-full bg-gray-100 rounded-full h-2">
-                <div
-                  className={`${barColor} h-2 rounded-full transition-all duration-700`}
-                  style={{ width: `${Math.min(pct, 100)}%` }}
-                />
-              </div>
-              <p className="text-xs text-gray-400 mt-1 text-right">{pct.toFixed(0)}%</p>
-            </div>
-          );
-        })}
-        {items.length === 0 && <p className="text-sm text-gray-300 text-center py-4">No data</p>}
-      </div>
-    </div>
-  );
-}
-
 // ── Overdue Trucks ────────────────────────────────────────────────────────────
 function OverdueTrucksCard({ trucks, loading, rulesConfigured }: {
   trucks: EnrichedOverdue[];
@@ -388,7 +394,7 @@ function OverdueTrucksCard({ trucks, loading, rulesConfigured }: {
   rulesConfigured: boolean;
 }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col flex-1 min-h-0">
+    <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col flex-1 min-h-0 animate-fade-in-up" style={{ animationDelay: "460ms" }}>
       <div className="flex items-center justify-between mb-4">
         <h2 className="font-semibold text-gray-900">Overdue Trucks</h2>
         {trucks.length > 0 && (
@@ -481,7 +487,7 @@ function OverdueTrucksCard({ trucks, loading, rulesConfigured }: {
 function LiveAlertsCard({ alerts }: { alerts: LiveAlertItem[] }) {
   const active = alerts.filter((a) => !a.notice_type || a.notice_type !== "resolved");
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col flex-1 min-h-0">
+    <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col flex-1 min-h-0 animate-fade-in-up" style={{ animationDelay: "520ms" }}>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <Bell className="w-4 h-4 text-amber-500" />
@@ -567,28 +573,42 @@ function WeeklyRevenueCard({ data }: { data: WeeklyRevenueItem[] }) {
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+    <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-100 shadow-sm p-5 animate-fade-in-up" style={{ animationDelay: "400ms" }}>
       <div className="flex items-center justify-between mb-5">
-        <h2 className="font-semibold text-gray-900">Revenue this week</h2>
+        <div>
+          <h2 className="font-semibold text-gray-900">Revenue this week</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Cash vs Card / UPI · last 7 days</p>
+        </div>
         <div className="flex items-center gap-4 text-xs text-gray-500">
           <span className="flex items-center gap-1.5">
-            <span className="w-3 h-2 rounded-sm inline-block" style={{ background: CHART.cash }} />
+            <span className="w-3 h-2 rounded-sm inline-block" style={{ background: "linear-gradient(180deg,#60a5fa,#2563eb)" }} />
             Cash
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-3 h-2 rounded-sm inline-block" style={{ background: CHART.card }} />
+            <span className="w-3 h-2 rounded-sm inline-block" style={{ background: "linear-gradient(180deg,#34d399,#059669)" }} />
             Card / UPI
           </span>
         </div>
       </div>
-      <ResponsiveContainer width="100%" height={230}>
-        <BarChart data={data} barCategoryGap="40%" margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="2 4" vertical={false} stroke="#f3f4f6" />
+      <ResponsiveContainer width="100%" height={260}>
+        <BarChart data={data} barCategoryGap="28%" margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id="barCash" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#60a5fa" />
+              <stop offset="100%" stopColor="#2563eb" />
+            </linearGradient>
+            <linearGradient id="barCard" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#34d399" />
+              <stop offset="100%" stopColor="#059669" />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#eef2f7" />
           <XAxis
             dataKey="day"
             axisLine={false}
             tickLine={false}
             tick={{ fontSize: 12, fill: "#9ca3af" }}
+            dy={6}
           />
           <YAxis
             axisLine={false}
@@ -597,9 +617,9 @@ function WeeklyRevenueCard({ data }: { data: WeeklyRevenueItem[] }) {
             tickFormatter={fmtShort}
             width={52}
           />
-          <Tooltip content={<CustomTooltip />} cursor={{ fill: "#f9fafb", radius: 6 }} />
-          <Bar dataKey="cash"     stackId="a" fill={CHART.cash} name="Cash"     radius={[0, 0, 0, 0]} />
-          <Bar dataKey="card_upi" stackId="a" fill={CHART.card} name="Card/UPI" radius={[5, 5, 0, 0]} />
+          <Tooltip content={<CustomTooltip />} cursor={{ fill: "#f8fafc", radius: 8 }} />
+          <Bar dataKey="cash"     stackId="a" fill="url(#barCash)" name="Cash"     radius={[0, 0, 0, 0]} maxBarSize={46} animationDuration={1100} animationEasing="ease-out" />
+          <Bar dataKey="card_upi" stackId="a" fill="url(#barCard)" name="Card/UPI" radius={[6, 6, 0, 0]} maxBarSize={46} animationDuration={1100} animationEasing="ease-out" />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -613,7 +633,6 @@ function PaymentSplitCard({ split }: { split: PaymentSplit }) {
     { name: "Cash",      value: split.total_cash,      percent: split.cash_percent      },
     { name: "Card / UPI",value: split.total_card_upi,  percent: split.card_upi_percent  },
   ];
-  const PIE_COLORS = [CHART.cash, CHART.card];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const CustomTooltip = ({ active, payload }: any) => {
@@ -629,25 +648,39 @@ function PaymentSplitCard({ split }: { split: PaymentSplit }) {
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+    <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-100 shadow-sm p-5 animate-fade-in-up" style={{ animationDelay: "480ms" }}>
       <h2 className="font-semibold text-gray-900 mb-4">Payment Split</h2>
 
       {/* Donut with centered label */}
       <div className="relative h-[200px]">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
+            <defs>
+              <linearGradient id="pieCash" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#60a5fa" />
+                <stop offset="100%" stopColor="#2563eb" />
+              </linearGradient>
+              <linearGradient id="pieCard" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#34d399" />
+                <stop offset="100%" stopColor="#059669" />
+              </linearGradient>
+            </defs>
             <Pie
               data={pieData}
               cx="50%"
               cy="50%"
-              innerRadius="52%"
-              outerRadius="78%"
+              innerRadius="55%"
+              outerRadius="80%"
               paddingAngle={3}
               dataKey="value"
-              strokeWidth={0}
+              stroke="none"
+              startAngle={90}
+              endAngle={-270}
+              animationDuration={1100}
+              animationEasing="ease-out"
             >
               {pieData.map((_, i) => (
-                <Cell key={`c-${i}`} fill={PIE_COLORS[i]} />
+                <Cell key={`c-${i}`} fill={i === 0 ? "url(#pieCash)" : "url(#pieCard)"} />
               ))}
             </Pie>
             <Tooltip content={<CustomTooltip />} />
@@ -665,7 +698,7 @@ function PaymentSplitCard({ split }: { split: PaymentSplit }) {
         {pieData.map((d, i) => (
           <div key={d.name} className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full" style={{ background: PIE_COLORS[i] }} />
+              <div className="w-3 h-3 rounded-full" style={{ background: i === 0 ? "linear-gradient(135deg,#60a5fa,#2563eb)" : "linear-gradient(135deg,#34d399,#059669)" }} />
               <span className="text-sm text-gray-600">{d.name}</span>
             </div>
             <div className="text-right">
