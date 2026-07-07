@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   TrendingUp, TrendingDown, AlertTriangle, Clock,
   Layers, BarChart2, Activity, CreditCard, Loader2, ExternalLink,
+  Bell, Megaphone,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -13,7 +14,7 @@ import {
 } from "recharts";
 import type {
   DashboardResponse, DivisionOccupancyItem, SlotMapDivision,
-  WeeklyRevenueItem, PaymentSplit,
+  WeeklyRevenueItem, PaymentSplit, LiveAlertItem,
 } from "@/types/dashboard";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -245,9 +246,10 @@ export default function DashboardPage() {
               <div className="lg:col-span-3">
                 <SlotMapCard divisions={data.slot_map} />
               </div>
-              <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
+              <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 lg:flex lg:flex-col lg:h-[460px] gap-4">
                 <DivisionOccupancyCard items={data.division_occupancy} />
                 <OverdueTrucksCard trucks={overdueTrucks} loading={overdueLoading} rulesConfigured={overdueRules.length > 0} />
+                <LiveAlertsCard alerts={data.live_alerts} />
               </div>
             </div>
 
@@ -295,7 +297,7 @@ function KPICard({
 // ── Slot Map ──────────────────────────────────────────────────────────────────
 function SlotMapCard({ divisions }: { divisions: SlotMapDivision[] }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col" style={{ height: 420 }}>
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col h-[460px]">
       <div className="flex items-center justify-between mb-4 shrink-0">
         <h2 className="font-semibold text-gray-900">Live Slot Map</h2>
         <div className="flex items-center gap-3 text-xs text-gray-500">
@@ -340,9 +342,9 @@ function SlotMapCard({ divisions }: { divisions: SlotMapDivision[] }) {
 // ── Division Occupancy ────────────────────────────────────────────────────────
 function DivisionOccupancyCard({ items }: { items: DivisionOccupancyItem[] }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 shrink-0">
       <h2 className="font-semibold text-gray-900 mb-4">Division Occupancy</h2>
-      <div className="space-y-4">
+      <div className="space-y-4 overflow-y-auto max-h-[220px] pr-1">
         {items.map((item) => {
           const pct = item.occupancy_percent;
           const barColor =
@@ -386,7 +388,7 @@ function OverdueTrucksCard({ trucks, loading, rulesConfigured }: {
   rulesConfigured: boolean;
 }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex-1">
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col flex-1 min-h-0">
       <div className="flex items-center justify-between mb-4">
         <h2 className="font-semibold text-gray-900">Overdue Trucks</h2>
         {trucks.length > 0 && (
@@ -419,7 +421,7 @@ function OverdueTrucksCard({ trucks, loading, rulesConfigured }: {
       )}
 
       {!loading && trucks.length > 0 && (
-        <div className="space-y-2.5 overflow-y-auto max-h-56">
+        <div className="space-y-2.5 overflow-y-auto flex-1 min-h-0">
           {trucks.map((t) => {
             const hex = t.rule.color;
             return (
@@ -469,6 +471,69 @@ function OverdueTrucksCard({ trucks, loading, rulesConfigured }: {
               </div>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Live Alerts ───────────────────────────────────────────────────────────────
+function LiveAlertsCard({ alerts }: { alerts: LiveAlertItem[] }) {
+  const active = alerts.filter((a) => !a.notice_type || a.notice_type !== "resolved");
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col flex-1 min-h-0">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Bell className="w-4 h-4 text-amber-500" />
+          <h2 className="font-semibold text-gray-900">Live Alerts</h2>
+        </div>
+        {active.length > 0 && (
+          <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2.5 py-1 rounded-full">
+            {active.length} active
+          </span>
+        )}
+      </div>
+
+      {alerts.length === 0 && (
+        <div className="text-center py-8">
+          <Megaphone className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+          <p className="text-sm text-gray-400">No alerts right now</p>
+        </div>
+      )}
+
+      {alerts.length > 0 && (
+        <div className="space-y-2.5 overflow-y-auto flex-1 min-h-0">
+          {alerts.map((a) => (
+            <div
+              key={a.id}
+              className={`border-l-4 rounded-r-xl pl-3 pr-3.5 py-2.5 ${
+                a.is_system
+                  ? "bg-slate-50 border-slate-300"
+                  : a.notice_type === "warning"
+                  ? "bg-rose-50 border-rose-300"
+                  : "bg-amber-50 border-amber-300"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  {a.truck_number && (
+                    <span className="text-sm font-bold font-mono text-gray-900">{a.truck_number}</span>
+                  )}
+                  {a.owner_name && (
+                    <p className="text-xs text-gray-500 mt-0.5 truncate">{a.owner_name}</p>
+                  )}
+                  <p className="text-xs text-gray-600 mt-0.5">{a.message ?? a.notice_type}</p>
+                  {a.created_at && (
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      {new Date(a.created_at).toLocaleString("en-IN", {
+                        day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: true,
+                      })}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
