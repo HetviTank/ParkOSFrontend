@@ -650,11 +650,13 @@ function ReceiptDrawer({ paymentId, onClose }: { paymentId: string; onClose(): v
                 {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send
               </button>
             )}
-            <button onClick={() => window.print()}
+            <button
+              onClick={() => window.open(`/dashboard/billing/receipt?payment_id=${paymentId}`, "_blank", "width=700,height=900")}
               className="flex items-center gap-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-xl shadow-sm shadow-blue-200 transition">
               <Printer className="w-3.5 h-3.5" /> Print
             </button>
-            <button onClick={() => { document.title = `Receipt-${data ? receiptNo(data.payment) : ""}`; window.print(); }}
+            <button
+              onClick={() => window.open(`/dashboard/billing/receipt?payment_id=${paymentId}&print=1`, "_blank", "width=700,height=900")}
               className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-xl shadow-sm transition">
               <FileDown className="w-3.5 h-3.5" /> PDF
             </button>

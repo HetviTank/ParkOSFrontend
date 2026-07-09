@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft, Printer, FileDown, Send, Loader2,
-  AlertCircle, CheckCircle2, Clock, MapPin,
+  AlertCircle, CheckCircle2, Clock,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -111,14 +111,22 @@ function LoadingSkeleton() {
 
 // ── main content ──────────────────────────────────────────────────────────────
 function ReceiptContent() {
-  const params    = useSearchParams();
-  const paymentId = params.get("payment_id");
+  const params     = useSearchParams();
+  const paymentId  = params.get("payment_id");
+  const autoPrint  = params.get("print") === "1";
 
   const [data,    setData]    = useState<ReceiptData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState("");
   const [sending, setSending] = useState(false);
   const [sentOk,  setSentOk]  = useState(false);
+
+  // auto-print when opened via PDF button in drawer
+  useEffect(() => {
+    if (!autoPrint || loading || !data) return;
+    const t = setTimeout(() => window.print(), 400);
+    return () => clearTimeout(t);
+  }, [autoPrint, loading, data]);
 
   const load = useCallback(async () => {
     if (!paymentId) { setLoading(false); return; }
