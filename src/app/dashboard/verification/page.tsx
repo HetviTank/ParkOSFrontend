@@ -241,7 +241,7 @@ export default function VerificationPage() {
 
   if (loading) {
     return (
-      <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto">
+      <div className="px-4 sm:px-5 lg:px-6 py-5 w-full">
         <div className="h-6 w-48 bg-gray-100 rounded-full animate-pulse mb-6" />
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <div className="lg:col-span-2 space-y-4">
@@ -256,7 +256,7 @@ export default function VerificationPage() {
   }
 
   return (
-    <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto space-y-5">
+    <div className="px-4 sm:px-5 lg:px-6 py-5 w-full space-y-5">
 
       {/* ── Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

@@ -140,7 +140,7 @@ export default function BlacklistPage() {
   const getAdminName = (id: string | null) => id ? (adminCache.current[id] ?? adminNames[id] ?? "Admin") : "System";
 
   return (
-    <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto space-y-5">
+    <div className="px-4 sm:px-5 lg:px-6 py-5 w-full space-y-5">
 
       {/* ── Header ── */}
       <div>

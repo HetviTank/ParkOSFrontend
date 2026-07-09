@@ -223,7 +223,7 @@ function ProfileContent() {
   const sinceYear   = lastIn ? new Date(lastIn).getFullYear() : null;
 
   return (
-    <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto space-y-5">
+    <div className="px-4 sm:px-5 lg:px-6 py-5 w-full space-y-5">
 
       {/* ── Header bar ── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

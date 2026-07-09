@@ -400,7 +400,7 @@ export default function CheckOutPage() {
 
   // ── main render ───────────────────────────────────────────────────────────────
   return (
-    <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto space-y-5">
+    <div className="px-4 sm:px-5 lg:px-6 py-5 w-full space-y-5">
 
       {/* Blacklisted truck blocking modal */}
       {showBlacklisted && typeof window !== "undefined" && createPortal(

@@ -151,7 +151,7 @@ export default function SessionDetailPage() {
 
   if (error || !session) {
     return (
-      <div className="px-4 sm:px-6 py-8 max-w-screen-xl mx-auto">
+      <div className="px-4 sm:px-5 lg:px-6 py-5 w-full">
         <div className="bg-red-50 border border-red-100 rounded-2xl px-5 py-5 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
           <div>
@@ -179,7 +179,7 @@ export default function SessionDetailPage() {
   const truckBadgeBg = isCheckedOut ? "bg-teal-700" : isOverdue ? "bg-red-600" : isKhata ? "bg-violet-700" : "bg-blue-700";
 
   return (
-    <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto space-y-5">
+    <div className="px-4 sm:px-5 lg:px-6 py-5 w-full space-y-5">
 
       {/* Breadcrumb */}
       <div>

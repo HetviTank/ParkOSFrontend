@@ -91,7 +91,7 @@ export default function OwnerProfilePage() {
 
 function PageSkeleton() {
   return (
-    <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto animate-pulse space-y-5">
+    <div className="px-4 sm:px-5 lg:px-6 py-5 w-full animate-pulse space-y-5">
       <div className="h-4 bg-gray-100 rounded-full w-48" />
       <div className="h-32 bg-gray-100 rounded-2xl" />
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
@@ -231,7 +231,7 @@ function ProfileContent() {
 
   if (!ownerId) {
     return (
-      <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto">
+      <div className="px-4 sm:px-5 lg:px-6 py-5 w-full">
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-16 text-center">
           <div className="w-14 h-14 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
             <Users className="w-7 h-7 text-gray-300" />
@@ -249,7 +249,7 @@ function ProfileContent() {
 
   if (error) {
     return (
-      <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto">
+      <div className="px-4 sm:px-5 lg:px-6 py-5 w-full">
         <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
           <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
           <p className="text-sm text-red-700">{error}</p>
@@ -261,7 +261,7 @@ function ProfileContent() {
   if (!owner) return null;
 
   return (
-    <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto space-y-5">
+    <div className="px-4 sm:px-5 lg:px-6 py-5 w-full space-y-5">
 
       {/* breadcrumb + edit */}
       <div className="flex items-center justify-between">

@@ -187,7 +187,7 @@ export default function DashboardPage() {
   }, [fetchData, fetchOverdueTrucks]);
 
   return (
-    <main className="relative px-4 sm:px-6 py-6 space-y-5 max-w-screen-2xl mx-auto">
+    <main className="relative px-4 sm:px-5 lg:px-6 py-5 space-y-4 w-full">
 
         {/* Ambient animated background */}
         <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">

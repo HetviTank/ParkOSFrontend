@@ -409,7 +409,7 @@ export default function CheckInPage() {
 
   // ── form ──────────────────────────────────────────────────────────────────
   return (
-    <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto space-y-5">
+    <div className="px-4 sm:px-5 lg:px-6 py-5 w-full space-y-4">
 
       {/* Page header */}
       <div className="relative overflow-hidden bg-gradient-to-r from-blue-600 via-blue-600 to-indigo-700 rounded-2xl shadow-lg shadow-blue-200 px-6 py-5">
