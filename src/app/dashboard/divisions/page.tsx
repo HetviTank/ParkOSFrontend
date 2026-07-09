@@ -309,17 +309,29 @@ export default function DivisionsPage() {
           <p className="text-sm text-gray-400 mt-0.5">Set slot counts, truck types, and per-day charges per division.</p>
         </div>
 
-        {/* location selector */}
-        <div className="shrink-0">
-          <p className="text-xs font-semibold text-gray-500 mb-1.5 sm:text-right">Viewing location</p>
-          <div className="relative">
-            <select value={selLoc} onChange={e => setSelLoc(e.target.value)}
-              className="appearance-none bg-white border border-gray-200 rounded-2xl pl-4 pr-10 py-2.5 text-sm font-bold text-gray-900 shadow-sm hover:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition min-w-[220px] cursor-pointer">
-              {locations.map(l => (
-                <option key={l.id} value={l.id}>{l.name}{l.city ? ` — ${l.city}` : ""}</option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+        <div className="flex items-end gap-3 shrink-0">
+          {/* Add division button */}
+          {!addOpen && (
+            <button
+              onClick={() => { setAddOpen(true); setNewName(""); setNewType("heavy"); setNewSlots(""); setNewRate(""); setNewGst("18"); setNewStatus("active"); setNewErr(""); setNewOk(false); }}
+              className="flex items-center gap-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-2xl px-4 py-2.5 shadow-sm shadow-blue-200 transition"
+            >
+              <Plus className="w-4 h-4" /> Add division
+            </button>
+          )}
+
+          {/* location selector */}
+          <div>
+            <p className="text-xs font-semibold text-gray-500 mb-1.5 sm:text-right">Viewing location</p>
+            <div className="relative">
+              <select value={selLoc} onChange={e => setSelLoc(e.target.value)}
+                className="appearance-none bg-white border border-gray-200 rounded-2xl pl-4 pr-10 py-2.5 text-sm font-bold text-gray-900 shadow-sm hover:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition min-w-[220px] cursor-pointer">
+                {locations.map(l => (
+                  <option key={l.id} value={l.id}>{l.name}{l.city ? ` — ${l.city}` : ""}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+            </div>
           </div>
         </div>
       </div>
@@ -328,6 +340,97 @@ export default function DivisionsPage() {
         <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-2xl px-4 py-3">
           <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
           <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
+
+      {/* Add division form — shown at top when button clicked */}
+      {addOpen && (
+        <div ref={formRef} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center">
+                <Plus className="w-4 h-4 text-blue-600" />
+              </div>
+              <p className="text-sm font-black text-gray-900">New division</p>
+            </div>
+            <button onClick={() => setAddOpen(false)} className="p-1.5 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <form id="add-div-form" onSubmit={handleAdd} className="px-6 py-5 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Division name <span className="text-red-400">*</span></label>
+                <input value={newName} onChange={e => { setNewName(e.target.value); setNewErr(""); }}
+                  placeholder="e.g. Division D" className={inputCls("focus:ring-blue-400 focus:border-blue-400")} />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Truck type <span className="text-red-400">*</span></label>
+                <div className="relative">
+                  <select value={newType} onChange={e => setNewType(e.target.value)}
+                    className="w-full appearance-none px-3.5 py-3 text-sm font-semibold text-gray-900 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition shadow-sm pr-9 cursor-pointer">
+                    {TRUCK_TYPES.map(t => <option key={t} value={t}>{truckLabel(t)}</option>)}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Total slots <span className="text-red-400">*</span></label>
+                <input type="number" min={0} value={newSlots} onChange={e => { setNewSlots(e.target.value.replace(/\D/g,"")); setNewErr(""); }}
+                  placeholder="30" className={inputCls("focus:ring-blue-400 focus:border-blue-400")} />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Rate / day (₹) <span className="text-red-400">*</span></label>
+                <input type="number" min={1} value={newRate} onChange={e => { setNewRate(e.target.value.replace(/\D/g,"")); setNewErr(""); }}
+                  placeholder="350" className={inputCls("focus:ring-blue-400 focus:border-blue-400")} />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">GST (%)</label>
+                <input type="number" min={0} max={100} value={newGst} onChange={e => setNewGst(e.target.value)}
+                  placeholder="18" className={inputCls("focus:ring-blue-400 focus:border-blue-400")} />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Status</label>
+              <div className="flex gap-2">
+                {["active","draft"].map(s => (
+                  <button key={s} type="button" onClick={() => setNewStatus(s)}
+                    className={`px-4 py-2 text-xs font-bold rounded-xl border transition ${newStatus === s ? "bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-200" : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"}`}>
+                    {s.charAt(0).toUpperCase() + s.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {newErr && (
+              <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5">
+                <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                <p className="text-xs text-red-700">{newErr}</p>
+              </div>
+            )}
+            {newOk && (
+              <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <p className="text-xs text-emerald-700 font-semibold">Division added!</p>
+              </div>
+            )}
+          </form>
+
+          <div className="px-6 pb-5 flex gap-3">
+            <button type="button" onClick={() => setAddOpen(false)}
+              className="flex-1 sm:flex-none py-2.5 px-6 text-sm font-semibold text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition">
+              Cancel
+            </button>
+            <button type="submit" form="add-div-form" disabled={newBusy}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-2 py-2.5 px-6 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 rounded-xl shadow-sm shadow-blue-200 transition">
+              {newBusy ? <><Loader2 className="w-4 h-4 animate-spin" />Adding…</> : <><Plus className="w-4 h-4" />Add division</>}
+            </button>
+          </div>
         </div>
       )}
 
@@ -567,101 +670,6 @@ export default function DivisionsPage() {
             );
           })}
 
-          {/* add new division */}
-          {!addOpen ? (
-            <button onClick={() => { setAddOpen(true); setNewName(""); setNewType("heavy"); setNewSlots(""); setNewRate(""); setNewGst("18"); setNewStatus("active"); setNewErr(""); setNewOk(false); }}
-              className="w-full flex items-center justify-center gap-2 text-sm font-bold text-gray-500 bg-white hover:bg-gray-50 border border-dashed border-gray-300 hover:border-blue-400 hover:text-blue-600 rounded-2xl py-4 shadow-sm transition">
-              <Plus className="w-4 h-4" />Add new division
-            </button>
-          ) : (
-            <div ref={formRef} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center">
-                    <Plus className="w-4 h-4 text-blue-600" />
-                  </div>
-                  <p className="text-sm font-black text-gray-900">New division</p>
-                </div>
-                <button onClick={() => setAddOpen(false)} className="p-1.5 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <form id="add-div-form" onSubmit={handleAdd} className="px-6 py-5 space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Division name <span className="text-red-400">*</span></label>
-                    <input value={newName} onChange={e => { setNewName(e.target.value); setNewErr(""); }}
-                      placeholder="e.g. Division D" className={inputCls("focus:ring-blue-400 focus:border-blue-400")} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Truck type <span className="text-red-400">*</span></label>
-                    <div className="relative">
-                      <select value={newType} onChange={e => setNewType(e.target.value)}
-                        className="w-full appearance-none px-3.5 py-3 text-sm font-semibold text-gray-900 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition shadow-sm pr-9 cursor-pointer">
-                        {TRUCK_TYPES.map(t => <option key={t} value={t}>{truckLabel(t)}</option>)}
-                      </select>
-                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Total slots <span className="text-red-400">*</span></label>
-                    <input type="number" min={0} value={newSlots} onChange={e => { setNewSlots(e.target.value.replace(/\D/g,"")); setNewErr(""); }}
-                      placeholder="30" className={inputCls("focus:ring-blue-400 focus:border-blue-400")} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Rate / day (₹) <span className="text-red-400">*</span></label>
-                    <input type="number" min={1} value={newRate} onChange={e => { setNewRate(e.target.value.replace(/\D/g,"")); setNewErr(""); }}
-                      placeholder="350" className={inputCls("focus:ring-blue-400 focus:border-blue-400")} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">GST (%)</label>
-                    <input type="number" min={0} max={100} value={newGst} onChange={e => setNewGst(e.target.value)}
-                      placeholder="18" className={inputCls("focus:ring-blue-400 focus:border-blue-400")} />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Status</label>
-                  <div className="flex gap-2">
-                    {["active","draft"].map(s => (
-                      <button key={s} type="button" onClick={() => setNewStatus(s)}
-                        className={`px-4 py-2 text-xs font-bold rounded-xl border transition ${newStatus === s ? "bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-200" : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"}`}>
-                        {s.charAt(0).toUpperCase() + s.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {newErr && (
-                  <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5">
-                    <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-                    <p className="text-xs text-red-700">{newErr}</p>
-                  </div>
-                )}
-                {newOk && (
-                  <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <p className="text-xs text-emerald-700 font-semibold">Division added!</p>
-                  </div>
-                )}
-              </form>
-
-              <div className="px-6 pb-5 flex gap-3">
-                <button type="button" onClick={() => setAddOpen(false)}
-                  className="flex-1 sm:flex-none py-2.5 px-6 text-sm font-semibold text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition">
-                  Cancel
-                </button>
-                <button type="submit" form="add-div-form" disabled={newBusy}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 py-2.5 px-6 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 rounded-xl shadow-sm shadow-blue-200 transition">
-                  {newBusy ? <><Loader2 className="w-4 h-4 animate-spin" />Adding…</> : <><Plus className="w-4 h-4" />Add division</>}
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>
