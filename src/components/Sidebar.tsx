@@ -44,10 +44,7 @@ const NAV: NavGroup[] = [
   {
     section: "FINANCE",
     items: [
-      {
-        label: "Billing", href: "/dashboard/billing", icon: FileText,
-        children: [{ label: "Receipt View", href: "/dashboard/billing/receipt" }],
-      },
+      { label: "Billing", href: "/dashboard/billing", icon: FileText },
       { label: "Reports", href: "/dashboard/reports", icon: BarChart2 },
     ],
   },

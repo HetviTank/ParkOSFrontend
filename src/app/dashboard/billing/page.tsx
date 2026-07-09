@@ -6,7 +6,7 @@ import {
   ChevronRight, Download, ChevronDown,
   Loader2, AlertCircle, TrendingUp, CreditCard, Banknote,
   Clock, Receipt, Phone, ChevronLeft, ChevronRight as Next,
-  RefreshCw,
+  RefreshCw, X, Printer, FileDown, Send, CheckCircle2,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -109,6 +109,7 @@ export default function BillingPage() {
   const [loading,     setLoading]     = useState(false);
   const [error,       setError]       = useState("");
   const [page,        setPage]        = useState(1);
+  const [receiptId,   setReceiptId]   = useState<string | null>(null);
 
   // filters
   const [locId,   setLocId]   = useState("");
@@ -416,10 +417,10 @@ export default function BillingPage() {
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-2">
                         {isPaid && r.payment && (
-                          <Link href={`/dashboard/billing/receipt?payment_id=${r.payment.id}`}
+                          <button onClick={() => setReceiptId(r.payment!.id)}
                             className="flex items-center gap-1 text-xs font-semibold text-gray-600 hover:text-blue-600 bg-gray-100 hover:bg-blue-50 border border-gray-200 hover:border-blue-200 px-2.5 py-1.5 rounded-lg transition">
                             <Receipt className="w-3 h-3" />Receipt
-                          </Link>
+                          </button>
                         )}
                         {isPending && r.owner_mobile && (
                           <a href={`tel:${r.owner_mobile}`}
@@ -520,7 +521,266 @@ export default function BillingPage() {
           </div>
         )}
       </div>
+
+      {/* receipt drawer */}
+      {receiptId && <ReceiptDrawer paymentId={receiptId} onClose={() => setReceiptId(null)} />}
     </div>
+  );
+}
+
+// ── Receipt types ─────────────────────────────────────────────────────────────
+interface RPayment {
+  id: string; session_id: string; receipt_no: string | null;
+  subtotal: number | null; gst_amount: number | null; total_amount: number | null;
+  method: string; amount_received: number | null; change_due: number | null;
+  status: string; paid_at: string | null;
+}
+interface RSession {
+  id: string; truck_id: string; owner_id: string | null; location_id: string;
+  division_id: string | null; slot_id: string | null;
+  check_in_time: string | null; check_out_time: string | null;
+  days: number | null; rate_per_day: number | null; gst_percent: number | null;
+  subtotal: number | null; gst_amount: number | null; total_amount: number | null;
+}
+interface RTruck    { truck_number: string; truck_type: string | null }
+interface ROwner    { id: string; name: string; primary_mobile: string }
+interface RLocation { name: string; city: string | null; address: string | null }
+interface RDivision { name: string }
+interface RSlot     { code: string }
+interface ReceiptData {
+  payment: RPayment; session: RSession;
+  truck: RTruck | null; owner: ROwner | null; location: RLocation | null;
+  division: RDivision | null; slot: RSlot | null;
+}
+
+function receiptNo(p: RPayment) { return p.receipt_no ?? `PKG-${p.id.slice(0, 6).toUpperCase()}`; }
+function fmtDT(iso: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return `${d.getDate()} ${d.toLocaleDateString("en-IN", { month: "short" })} · ${d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+}
+function calcDur(ci: string | null, co: string | null) {
+  if (!ci || !co) return "—";
+  const ms = new Date(co).getTime() - new Date(ci).getTime();
+  if (ms <= 0) return "—";
+  const d = Math.floor(ms / 86400000), h = Math.floor((ms % 86400000) / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  return [d && `${d}d`, h && `${h}h`, m && `${m}m`].filter(Boolean).join(" ") || "< 1m";
+}
+function rMethodLabel(m: string) {
+  return { cash: "Cash", card: "Card", upi: "UPI", online: "Online" }[m.toLowerCase()] ?? m;
+}
+
+// ── Receipt Drawer ────────────────────────────────────────────────────────────
+function ReceiptDrawer({ paymentId, onClose }: { paymentId: string; onClose(): void }) {
+  const [data,    setData]    = useState<ReceiptData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err,     setErr]     = useState("");
+  const [sending, setSending] = useState(false);
+  const [sentOk,  setSentOk]  = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      setLoading(true); setErr("");
+      try {
+        const payment = await apiFetch<RPayment>(`/payments/${paymentId}`);
+        const session = await apiFetch<RSession>(`/parking-sessions/${payment.session_id}`);
+        const [trR, owR, loR, diR, slR] = await Promise.allSettled([
+          apiFetch<RTruck>(`/trucks/${session.truck_id}`),
+          session.owner_id    ? apiFetch<ROwner>(`/owners/${session.owner_id}`) : Promise.resolve(null),
+          apiFetch<RLocation>(`/locations/${session.location_id}`),
+          session.division_id ? apiFetch<RDivision>(`/divisions/${session.division_id}`) : Promise.resolve(null),
+          session.slot_id     ? apiFetch<RSlot>(`/slots/${session.slot_id}`) : Promise.resolve(null),
+        ]);
+        if (!live) return;
+        setData({
+          payment, session,
+          truck:    trR.status === "fulfilled" ? trR.value : null,
+          owner:    owR.status === "fulfilled" ? owR.value : null,
+          location: loR.status === "fulfilled" ? loR.value : null,
+          division: diR.status === "fulfilled" ? diR.value : null,
+          slot:     slR.status === "fulfilled" ? slR.value : null,
+        });
+      } catch (e) { if (live) setErr(e instanceof Error ? e.message : "Failed to load receipt."); }
+      finally    { if (live) setLoading(false); }
+    })();
+    return () => { live = false; };
+  }, [paymentId]);
+
+  async function handleSend() {
+    if (!data?.session.owner_id) return;
+    setSending(true);
+    try {
+      await apiFetch("/notices", {
+        method: "POST",
+        body: JSON.stringify({
+          notice_type: "receipt_sent",
+          message: `Receipt ${receiptNo(data.payment)} for truck ${data.truck?.truck_number ?? ""} — ₹${data.payment.total_amount}. Thank you for using ParkOS.`,
+          owner_id: data.session.owner_id, session_id: data.session.id, status: "open",
+        }),
+      });
+      setSentOk(true); setTimeout(() => setSentOk(false), 3000);
+    } catch { /* silent */ }
+    finally { setSending(false); }
+  }
+
+  return (
+    <>
+      {/* print styles */}
+      <style>{`@media print { .no-print { display:none!important; } body { background:white!important; } .receipt-card { box-shadow:none!important; border:none!important; } }`}</style>
+
+      {/* backdrop */}
+      <div className="no-print fixed inset-0 z-40 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+
+      {/* drawer panel */}
+      <div className="fixed inset-y-0 right-0 z-50 w-full sm:w-[480px] bg-[#f8fafc] shadow-2xl flex flex-col overflow-hidden">
+
+        {/* header */}
+        <div className="no-print flex items-center justify-between px-5 py-4 bg-white border-b border-gray-100 shrink-0">
+          <p className="text-sm font-bold text-gray-900">Receipt</p>
+          <div className="flex items-center gap-2">
+            {sentOk && (
+              <span className="flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Sent
+              </span>
+            )}
+            {data?.session.owner_id && (
+              <button onClick={handleSend} disabled={sending}
+                className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-xl shadow-sm transition">
+                {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send
+              </button>
+            )}
+            <button onClick={() => window.print()}
+              className="flex items-center gap-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-xl shadow-sm shadow-blue-200 transition">
+              <Printer className="w-3.5 h-3.5" /> Print
+            </button>
+            <button onClick={() => { document.title = `Receipt-${data ? receiptNo(data.payment) : ""}`; window.print(); }}
+              className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-xl shadow-sm transition">
+              <FileDown className="w-3.5 h-3.5" /> PDF
+            </button>
+            <button onClick={onClose} className="p-1.5 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* body */}
+        <div className="flex-1 overflow-y-auto p-5">
+          {loading && (
+            <div className="animate-pulse space-y-4">
+              <div className="h-40 bg-gray-200 rounded-2xl" />
+              <div className="h-20 bg-gray-100 rounded-2xl" />
+              <div className="h-32 bg-gray-100 rounded-2xl" />
+            </div>
+          )}
+
+          {!loading && err && (
+            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+              <p className="text-sm text-red-700">{err}</p>
+            </div>
+          )}
+
+          {!loading && data && (() => {
+            const { payment, session, truck, owner, location, division, slot } = data;
+            const subtotal = payment.subtotal ?? session.subtotal ?? 0;
+            const gstAmt   = payment.gst_amount ?? session.gst_amount ?? 0;
+            const total    = payment.total_amount ?? session.total_amount ?? 0;
+            const gstPct   = session.gst_percent ?? 0;
+            const days     = session.days ?? 0;
+            const rate     = session.rate_per_day ?? (days > 0 ? Math.round(subtotal / days) : 0);
+            const truckType = truck?.truck_type ? truck.truck_type.charAt(0).toUpperCase() + truck.truck_type.slice(1) : null;
+            return (
+              <div className="receipt-card bg-white rounded-3xl shadow-xl shadow-gray-200/80 overflow-hidden border border-gray-100 max-w-md mx-auto">
+                {/* dark header */}
+                <div className="bg-gradient-to-br from-indigo-900 via-indigo-800 to-blue-900 px-6 py-7 text-center relative overflow-hidden">
+                  <div className="absolute -left-8 -top-8 w-32 h-32 rounded-full bg-white/5" />
+                  <div className="absolute -right-4 -bottom-8 w-28 h-28 rounded-full bg-white/5" />
+                  <p className="text-xl font-black text-white tracking-wide relative">ParkOS</p>
+                  {location && (
+                    <>
+                      <p className="text-sm text-indigo-300 mt-1 font-medium relative">{location.name}{location.city ? ` — ${location.city}` : ""}</p>
+                      {location.address && <p className="text-xs text-indigo-400 mt-0.5 relative">{location.address}</p>}
+                    </>
+                  )}
+                  <div className="inline-flex items-center gap-1.5 mt-3 bg-white/10 border border-white/20 rounded-full px-3 py-1 relative">
+                    <span className="text-xs font-bold text-indigo-200 font-mono tracking-wider">Receipt No: {receiptNo(payment)}</span>
+                  </div>
+                </div>
+
+                {/* truck */}
+                <div className="mx-5 mt-5 bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-100 rounded-2xl px-5 py-4 text-center">
+                  <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1.5">Truck Number</p>
+                  <p className="text-3xl font-black text-indigo-700 tracking-widest font-mono">{truck?.truck_number ?? "—"}</p>
+                  {(division || slot || truckType) && (
+                    <p className="text-xs text-indigo-400 mt-1.5 font-medium">
+                      {[division?.name, slot ? `Slot ${slot.code}` : null, truckType].filter(Boolean).join(" · ")}
+                    </p>
+                  )}
+                </div>
+
+                {/* owner + dates */}
+                <div className="mx-5 mt-3 grid grid-cols-2 gap-2">
+                  {[
+                    { label: "Owner",     val: owner?.name ?? "—" },
+                    { label: "Check-in",  val: fmtDT(session.check_in_time) },
+                    { label: "Check-out", val: fmtDT(session.check_out_time) },
+                    { label: "Duration",  val: calcDur(session.check_in_time, session.check_out_time) },
+                  ].map(({ label, val }) => (
+                    <div key={label} className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
+                      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">{label}</p>
+                      <p className="text-sm font-semibold text-gray-800">{val}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* charges */}
+                <div className="mx-5 mt-4 border border-gray-100 rounded-2xl overflow-hidden">
+                  {days > 0 && rate > 0 && (
+                    <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                      <p className="text-sm text-gray-600">{days} day{days !== 1 ? "s" : ""} × ₹{rate.toLocaleString("en-IN")}</p>
+                      <p className="text-sm font-semibold text-gray-800">₹{subtotal.toLocaleString("en-IN")}</p>
+                    </div>
+                  )}
+                  {gstPct > 0 && (
+                    <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                      <p className="text-sm text-gray-600">GST {gstPct}%</p>
+                      <p className="text-sm font-semibold text-gray-800">₹{gstAmt.toLocaleString("en-IN")}</p>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between px-5 py-4 bg-gray-50/60">
+                    <p className="text-base font-bold text-gray-900">Total paid</p>
+                    <p className="text-2xl font-black text-indigo-700">₹{total.toLocaleString("en-IN")}</p>
+                  </div>
+                </div>
+
+                {/* payment footer */}
+                <div className="mx-5 mt-3 grid grid-cols-2 gap-2">
+                  <div className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Payment method</p>
+                    <p className="text-sm font-bold text-gray-900">{rMethodLabel(payment.method)}</p>
+                  </div>
+                  {(payment.change_due ?? 0) > 0 && (
+                    <div className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
+                      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Change given</p>
+                      <p className="text-sm font-bold text-indigo-600">₹{(payment.change_due ?? 0).toLocaleString("en-IN")}</p>
+                    </div>
+                  )}
+                  {payment.paid_at && (
+                    <div className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
+                      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Paid at</p>
+                      <p className="text-xs font-semibold text-gray-600">{fmtDT(payment.paid_at)}</p>
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-center text-xs text-gray-400 italic py-5">Thank you for using ParkOS. Drive safe!</p>
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+    </>
   );
 }
 
