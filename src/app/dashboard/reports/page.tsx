@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ChevronRight, ChevronDown, Download, AlertCircle,
   Truck, Clock, Activity, AlertTriangle, TrendingUp, MapPin,
@@ -15,7 +16,7 @@ function getToken() {
 async function apiFetch<T>(path: string): Promise<T> {
   const token = getToken();
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json", token },
+    headers: { token },
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({ detail: "Request failed" }));
@@ -126,6 +127,7 @@ const selectCls = "appearance-none bg-white border border-gray-200 rounded-xl px
 
 // ── page ──────────────────────────────────────────────────────────────────────
 export default function ReportsPage() {
+  const router     = useRouter();
   const months     = useMemo(() => monthOptions(), []);
   const [locId,    setLocId]    = useState("");
   const [monthIdx, setMonthIdx] = useState(0);  // 0 = current month
@@ -138,11 +140,15 @@ export default function ReportsPage() {
 
   // load locations once
   useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) { router.replace("/login"); return; }
     apiFetch<{ count: number; list: Location[] }>("/locations?limit=50")
       .then(r => setLocs(r.list ?? [])).catch(() => {});
-  }, []);
+  }, [router]);
 
   const load = useCallback(async () => {
+    const token = localStorage.getItem("token");
+    if (!token) { router.replace("/login"); return; }
     setLoading(true); setError("");
     try {
       const dashUrl = `/dashboard${locId ? `?location_id=${locId}` : ""}`;

@@ -608,18 +608,6 @@ export default function CheckOutPage() {
                 </div>
               </div>
 
-              {/* Check-in driver */}
-              <div className="pt-1">
-                <SectionHeading>Check-in driver</SectionHeading>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <InfoBox icon={<User className="w-3.5 h-3.5" />} label="Name"    value={session.checkin_driver_name}   />
-                  <InfoBox icon={<User className="w-3.5 h-3.5" />} label="Mobile"  value={session.checkin_driver_mobile} mono />
-                  {session.checkin_driver_licence && (
-                    <InfoBox icon={<User className="w-3.5 h-3.5" />} label="Licence" value={session.checkin_driver_licence} mono />
-                  )}
-                </div>
-              </div>
-
               {/* Timing */}
               <div className="pt-1">
                 <SectionHeading>Timing</SectionHeading>

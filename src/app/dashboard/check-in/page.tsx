@@ -585,8 +585,11 @@ export default function CheckInPage() {
                   </div>
                   <div>
                     <label className={labelCls}>Owner mobile <Required /></label>
-                    <input value={ownerMobile} onChange={(e) => setOwnerMobile(e.target.value)}
-                      placeholder="+91 XXXXX XXXXX" className={inputCls} type="tel" maxLength={15} />
+                    <div className="relative">
+                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium pointer-events-none select-none">+91</span>
+                      <input value={ownerMobile} onChange={(e) => setOwnerMobile(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                        placeholder="98765 43210" className={inputCls + " pl-9"} type="tel" maxLength={10} />
+                    </div>
                   </div>
                   <div>
                     <label className={labelCls}>Company / Firm</label>
@@ -595,8 +598,11 @@ export default function CheckInPage() {
                   </div>
                   <div>
                     <label className={labelCls}>Alternate contact</label>
-                    <input value={ownerAlternate} onChange={(e) => setOwnerAlt(e.target.value)}
-                      placeholder="+91 XXXXX XXXXX" className={inputCls} type="tel" maxLength={15} />
+                    <div className="relative">
+                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium pointer-events-none select-none">+91</span>
+                      <input value={ownerAlternate} onChange={(e) => setOwnerAlt(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                        placeholder="98765 43210" className={inputCls + " pl-9"} type="tel" maxLength={10} />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -616,8 +622,11 @@ export default function CheckInPage() {
                 </div>
                 <div>
                   <label className={labelCls}>Driver mobile <Required /></label>
-                  <input value={driverMobile} onChange={(e) => setDriverMobile(e.target.value)}
-                    placeholder="+91 XXXXX XXXXX" className={inputCls} type="tel" maxLength={15} />
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium pointer-events-none select-none">+91</span>
+                    <input value={driverMobile} onChange={(e) => setDriverMobile(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                      placeholder="98765 43210" className={inputCls + " pl-9"} type="tel" maxLength={10} />
+                  </div>
                 </div>
                 <div>
                   <label className={labelCls}>Licence number</label>
@@ -813,45 +822,94 @@ export default function CheckInPage() {
 
       {/* ── success modal ─────────────────────────────────────────────────── */}
       {toast && typeof window !== "undefined" && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-gray-950/75 backdrop-blur-md" />
-          <div className="relative w-full max-w-sm overflow-hidden rounded-3xl shadow-2xl">
-            {/* emerald gradient top band */}
-            <div className="relative bg-gradient-to-br from-emerald-500 to-teal-600 px-8 pt-8 pb-10 flex flex-col items-center text-center overflow-hidden">
-              <div className="absolute -top-6 -right-6 w-32 h-32 rounded-full bg-white/10" />
-              <div className="absolute -bottom-8 -left-4 w-24 h-24 rounded-full bg-white/10" />
-              {/* countdown ring + check */}
-              <div className="relative w-20 h-20 mb-4">
-                <svg className="absolute inset-0 w-20 h-20 -rotate-90" viewBox="0 0 80 80">
-                  <circle cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="4" />
-                  <circle cx="40" cy="40" r="32" fill="none" stroke="white" strokeWidth="4"
-                    strokeDasharray="201" strokeLinecap="round"
-                    className="animate-[shrink_2.5s_linear_forwards]"
-                  />
-                </svg>
-                <div className="absolute inset-0 flex items-center justify-center bg-white/20 rounded-full">
-                  <Check className="w-9 h-9 text-white" strokeWidth={2.5} />
+        <>
+          <style>{`
+            @keyframes ci-backdrop { from { opacity:0 } to { opacity:1 } }
+            @keyframes ci-slideUp {
+              from { transform: translateY(28px) scale(0.95); opacity:0 }
+              to   { transform: translateY(0)    scale(1);    opacity:1 }
+            }
+            @keyframes ci-popIn {
+              0%   { transform: scale(0);   opacity:0 }
+              60%  { transform: scale(1.18) }
+              100% { transform: scale(1);   opacity:1 }
+            }
+            @keyframes ci-drawArc {
+              from { stroke-dashoffset: 201 }
+              to   { stroke-dashoffset: 0   }
+            }
+            @keyframes ci-fadeUp {
+              from { opacity:0; transform: translateY(10px) }
+              to   { opacity:1; transform: translateY(0)    }
+            }
+            @keyframes ci-progress {
+              from { width: 0% }
+              to   { width: 100% }
+            }
+          `}</style>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-gray-950/80 backdrop-blur-md"
+              style={{ animation: "ci-backdrop 0.3s ease forwards" }} />
+            <div className="relative w-full max-w-sm overflow-hidden rounded-3xl shadow-2xl"
+              style={{ animation: "ci-slideUp 0.45s cubic-bezier(0.34,1.5,0.64,1) forwards" }}>
+
+              {/* ── emerald top band ── */}
+              <div className="relative bg-gradient-to-br from-emerald-500 to-teal-600 px-8 pt-8 pb-10 flex flex-col items-center text-center overflow-hidden">
+                <div className="absolute -top-6 -right-6 w-32 h-32 rounded-full bg-white/10" />
+                <div className="absolute -bottom-8 -left-4 w-24 h-24 rounded-full bg-white/10" />
+
+                {/* check ring — pops in then arc draws */}
+                <div className="relative w-20 h-20 mb-4 z-10"
+                  style={{ animation: "ci-popIn 0.5s cubic-bezier(0.34,1.5,0.64,1) 0.1s both" }}>
+                  <svg className="absolute inset-0 w-20 h-20 -rotate-90" viewBox="0 0 80 80">
+                    <circle cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="4" />
+                    <circle cx="40" cy="40" r="32" fill="none" stroke="white" strokeWidth="4"
+                      strokeDasharray="201" strokeDashoffset="201" strokeLinecap="round"
+                      style={{ animation: "ci-drawArc 0.55s ease 0.3s forwards" }} />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center bg-white/20 rounded-full">
+                    <Check className="w-9 h-9 text-white" strokeWidth={2.5} />
+                  </div>
+                </div>
+
+                <h2 className="text-2xl font-extrabold text-white tracking-tight relative z-10"
+                  style={{ animation: "ci-fadeUp 0.4s ease 0.35s both" }}>
+                  Check-in Complete!
+                </h2>
+                <p className="text-emerald-100 text-sm mt-1 relative z-10"
+                  style={{ animation: "ci-fadeUp 0.4s ease 0.45s both" }}>
+                  Parking session is now active
+                </p>
+              </div>
+
+              {/* ── white bottom ── */}
+              <div className="bg-white px-6 py-6 space-y-4">
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl px-5 py-4 text-center"
+                  style={{ animation: "ci-fadeUp 0.4s ease 0.5s both" }}>
+                  <p className="text-[10px] font-bold text-blue-400 uppercase tracking-[0.15em] mb-1.5">Truck registered</p>
+                  <p className="text-3xl font-black text-blue-700 tracking-widest font-mono">{toast.truck}</p>
+                </div>
+
+                <div className="flex items-center justify-center"
+                  style={{ animation: "ci-fadeUp 0.4s ease 0.6s both" }}>
+                  <span className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold px-3 py-1.5 rounded-full">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Session Active
+                  </span>
+                </div>
+
+                {/* progress bar — fills over exactly 2.5s */}
+                <div style={{ animation: "ci-fadeUp 0.4s ease 0.65s both" }}>
+                  <p className="text-center text-xs text-gray-400 mb-2">Redirecting to All Trucks…</p>
+                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-500"
+                      style={{ width: "0%", animation: "ci-progress 2.5s linear 0.65s forwards" }} />
+                  </div>
                 </div>
               </div>
-              <h2 className="text-2xl font-extrabold text-white tracking-tight relative z-10">Check-in Complete!</h2>
-              <p className="text-emerald-100 text-sm mt-1 relative z-10">Parking session is now active</p>
-            </div>
-            {/* white bottom */}
-            <div className="bg-white px-6 py-6 space-y-4">
-              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl px-5 py-4 text-center">
-                <p className="text-[10px] font-bold text-blue-400 uppercase tracking-[0.15em] mb-1.5">Truck registered</p>
-                <p className="text-3xl font-black text-blue-700 tracking-widest font-mono">{toast.truck}</p>
-              </div>
-              <div className="flex items-center justify-center">
-                <span className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold px-3 py-1.5 rounded-full">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  Session Active
-                </span>
-              </div>
-              <p className="text-center text-xs text-gray-400">Redirecting to All Trucks…</p>
             </div>
           </div>
-        </div>,
+        </>,
         document.body
       )}
     </div>
