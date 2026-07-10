@@ -368,8 +368,8 @@ export default function KhataMasterPage() {
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium pointer-events-none">+91</span>
-                  <input value={fMobile} onChange={e => { setFMobile(e.target.value); setFErr(""); }}
-                    placeholder="XXXXX XXXXX" maxLength={15}
+                  <input value={fMobile} onChange={e => { setFMobile(e.target.value.replace(/\D/g, "").slice(0, 10)); setFErr(""); }}
+                    placeholder="98765 43210" type="tel" maxLength={10}
                     className={inputCls + " pl-9"} />
                 </div>
               </div>
