@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   ChevronRight, Bell, BellOff, CheckCircle2, AlertTriangle,
   AlertCircle, Clock, Truck, X, Loader2, Plus, RefreshCw,
-  ChevronDown, ChevronLeft, Phone, Info, CheckCheck,
+  ChevronDown, ChevronLeft, Phone, Info, CheckCheck, Search,
 } from "lucide-react";
 
 const PER_PAGE = 15;
@@ -38,9 +38,10 @@ interface Notice {
   truck_number?: string; owner_name?: string; owner_mobile?: string; created_by_name?: string;
 }
 interface AlertType { id: string; name: string | null; code: string; description: string | null }
-interface TruckObj  { id: string; truck_number: string }
+interface TruckObj  { id: string; truck_number: string; truck_type: string | null }
 interface Owner     { id: string; name: string; primary_mobile: string }
 interface AdminUser { id: string; name: string }
+interface Session   { id: string; truck_id: string | null; owner_id: string | null }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 function noticeConfig(type: string) {
@@ -124,6 +125,8 @@ function SuccessToast({ onDone }: { onDone: () => void }) {
 }
 
 // ── Add Notice Modal ──────────────────────────────────────────────────────────
+const TRUCK_PAGE_SIZE = 8;
+
 function AddNoticeModal({
   alertTypes, onClose, onSuccess,
 }: {
@@ -131,27 +134,94 @@ function AddNoticeModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const [fTruck, setFTruck] = useState("");
-  const [fType,  setFType]  = useState(alertTypes[0]?.code ?? "");
-  const [fMsg,   setFMsg]   = useState("");
-  const [fErr,   setFErr]   = useState("");
-  const [fBusy,  setFBusy]  = useState(false);
-  const truckCache = useRef<Record<string, TruckObj>>({});
+  const [selectedTruck, setSelectedTruck] = useState<TruckObj | null>(null);
+  const [truckSearch,   setTruckSearch]   = useState("");
+  const [truckOptions,  setTruckOptions]  = useState<TruckObj[]>([]);
+  const [truckTotal,    setTruckTotal]    = useState(0);
+  const [truckPage,     setTruckPage]     = useState(0);
+  const [truckLoading,  setTruckLoading]  = useState(false);
+  const [showDropdown,  setShowDropdown]  = useState(false);
 
-  async function handlePost(e: React.FormEvent) {
+  const [fType, setFType] = useState(alertTypes[0]?.code ?? "");
+  const [fMsg,  setFMsg]  = useState("");
+  const [fErr,  setFErr]  = useState("");
+  const [fBusy, setFBusy] = useState(false);
+
+  // load all trucks on mount
+  useEffect(() => {
+    (async () => {
+      setTruckLoading(true);
+      try {
+        const res = await apiFetch<{ count: number; list: TruckObj[] }>(
+          `/trucks?limit=${TRUCK_PAGE_SIZE}&start=0&sort_by=created_at&order=desc`
+        );
+        setTruckOptions(res.list ?? []);
+        setTruckTotal(res.count ?? 0);
+      } catch { /* silent */ }
+      finally { setTruckLoading(false); }
+    })();
+  }, []);
+
+  // debounced search — when empty, reload the default full list
+  useEffect(() => {
+    const q = truckSearch.trim();
+    if (!q) {
+      // reset to full list
+      setTruckPage(0);
+      setTruckLoading(true);
+      apiFetch<{ count: number; list: TruckObj[] }>(
+        `/trucks?limit=${TRUCK_PAGE_SIZE}&start=0&sort_by=created_at&order=desc`
+      ).then(res => {
+        setTruckOptions(res.list ?? []);
+        setTruckTotal(res.count ?? 0);
+      }).catch(() => {}).finally(() => setTruckLoading(false));
+      return;
+    }
+    const t = setTimeout(async () => {
+      setTruckLoading(true); setTruckPage(0);
+      try {
+        const res = await apiFetch<{ count: number; list: TruckObj[] }>(
+          `/trucks?search=${encodeURIComponent(q.toUpperCase())}&limit=${TRUCK_PAGE_SIZE}&start=0`
+        );
+        setTruckOptions(res.list ?? []);
+        setTruckTotal(res.count ?? 0);
+      } catch { /* silent */ }
+      finally { setTruckLoading(false); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [truckSearch]);
+
+  async function loadMoreTrucks() {
+    const nextPage = truckPage + 1;
+    setTruckLoading(true);
+    try {
+      const res = await apiFetch<{ count: number; list: TruckObj[] }>(
+        `/trucks?search=${encodeURIComponent(truckSearch.trim().toUpperCase())}&limit=${TRUCK_PAGE_SIZE}&start=${nextPage * TRUCK_PAGE_SIZE}`
+      );
+      setTruckOptions(prev => [...prev, ...(res.list ?? [])]);
+      setTruckPage(nextPage);
+    } catch { /* silent */ }
+    finally { setTruckLoading(false); }
+  }
+
+  function pickTruck(t: TruckObj) {
+    setSelectedTruck(t);
+    setTruckSearch(""); setShowDropdown(false);
+  }
+
+  async function handlePost(e: { preventDefault(): void }) {
     e.preventDefault();
     if (!fType) { setFErr("Select a notice type."); return; }
     setFBusy(true); setFErr("");
     try {
-      let truck_id: string | null = null;
-      if (fTruck.trim()) {
-        const res = await apiFetch<{ count: number; list: TruckObj[] }>(`/trucks?search=${encodeURIComponent(fTruck.trim().toUpperCase())}&limit=10`);
-        const match = res.list.find(t => t.truck_number.toUpperCase() === fTruck.trim().toUpperCase());
-        if (match) { truck_id = match.id; truckCache.current[match.id] = match; }
-      }
       await apiFetch<Notice>("/notices", {
         method: "POST",
-        body: JSON.stringify({ notice_type: fType, message: fMsg.trim() || null, truck_id, status: "open" }),
+        body: JSON.stringify({
+          notice_type: fType,
+          message: fMsg.trim() || null,
+          truck_id: selectedTruck?.id ?? null,
+          status: "open",
+        }),
       });
       onSuccess();
     } catch (err) {
@@ -160,15 +230,14 @@ function AddNoticeModal({
     }
   }
 
+  const hasMore = truckOptions.length < truckTotal;
+
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
-      {/* backdrop */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      {/* modal card */}
-      <div
-        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md"
-        style={{ animation: "modal-in .25s ease both" }}
-      >
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md"
+        style={{ animation: "modal-in .25s ease both" }}>
+
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center">
@@ -182,16 +251,89 @@ function AddNoticeModal({
         </div>
 
         <form onSubmit={handlePost} className="px-6 py-5 space-y-4">
+
+          {/* ── truck search / select ── */}
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1.5">Truck number</label>
-            <div className="relative">
-              <Truck className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
-              <input value={fTruck} onChange={e => setFTruck(e.target.value.toUpperCase())}
-                placeholder="e.g. GJ11AB1234"
-                className={inputCls + " pl-9 font-mono"} />
-            </div>
+
+            {selectedTruck ? (
+              /* selected chip */
+              <div className="flex items-center gap-2.5 bg-blue-50 border border-blue-200 rounded-xl px-3.5 py-2.5">
+                <Truck className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="font-mono font-bold text-sm text-blue-700">{selectedTruck.truck_number}</span>
+                  {selectedTruck.truck_type && (
+                    <span className="ml-2 text-[11px] text-blue-400">{selectedTruck.truck_type}</span>
+                  )}
+                </div>
+                <button type="button" onClick={() => setSelectedTruck(null)}
+                  className="p-1 rounded-lg text-blue-400 hover:text-blue-700 hover:bg-blue-100 transition shrink-0">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              /* search input + dropdown */
+              <div className="relative">
+                <Truck className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+                <input
+                  value={truckSearch}
+                  onChange={e => setTruckSearch(e.target.value.toUpperCase())}
+                  onBlur={() => setTimeout(() => setShowDropdown(false), 160)}
+                  onFocus={() => setShowDropdown(true)}
+                  placeholder="Search by truck number…"
+                  autoComplete="off"
+                  className={inputCls + " pl-9 pr-9 font-mono"}
+                />
+                {truckLoading
+                  ? <Loader2 className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-gray-400 pointer-events-none" />
+                  : truckSearch && <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-300 pointer-events-none" />
+                }
+
+                {/* dropdown */}
+                {showDropdown && (
+                  <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-gray-200 rounded-xl shadow-xl z-20 overflow-hidden">
+                    {truckOptions.length > 0 ? (
+                      <>
+                        <ul className="max-h-48 overflow-y-auto divide-y divide-gray-50">
+                          {truckOptions.map(t => (
+                            <li key={t.id}>
+                              <button type="button" onMouseDown={() => pickTruck(t)}
+                                className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-blue-50 transition text-left">
+                                <Truck className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                                <span className="font-mono font-bold text-sm text-gray-800 flex-1">{t.truck_number}</span>
+                                {t.truck_type && (
+                                  <span className="text-[11px] text-gray-400 shrink-0">{t.truck_type}</span>
+                                )}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                        {hasMore && (
+                          <button type="button" onMouseDown={loadMoreTrucks} disabled={truckLoading}
+                            className="w-full flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 border-t border-gray-100 transition disabled:opacity-60">
+                            {truckLoading
+                              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Loading…</>
+                              : <>Load more <span className="text-blue-400">({truckTotal - truckOptions.length} remaining)</span></>
+                            }
+                          </button>
+                        )}
+                      </>
+                    ) : !truckLoading ? (
+                      <div className="px-4 py-5 text-center">
+                        <AlertCircle className="w-5 h-5 text-gray-300 mx-auto mb-1.5" />
+                        <p className="text-xs font-semibold text-gray-500">No truck found</p>
+                        <p className="text-[11px] text-gray-400 mt-0.5">
+                          &ldquo;{truckSearch}&rdquo; is not registered in the system
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
+          {/* ── notice type ── */}
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1.5">
               Notice type <span className="text-red-400">*</span>
@@ -216,6 +358,7 @@ function AddNoticeModal({
             </div>
           </div>
 
+          {/* ── message ── */}
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1.5">Notice details</label>
             <textarea value={fMsg} onChange={e => setFMsg(e.target.value)} rows={3}
@@ -264,26 +407,56 @@ export default function NoticesPage() {
   const [page,      setPage]      = useState(1);
   const pageRef = useRef(1);
 
-  const truckCache = useRef<Record<string, TruckObj>>({});
-  const ownerCache = useRef<Record<string, Owner>>({});
-  const adminCache = useRef<Record<string, string>>({});
+  const truckCache   = useRef<Record<string, TruckObj>>({});
+  const ownerCache   = useRef<Record<string, Owner>>({});
+  const adminCache   = useRef<Record<string, string>>({});
+  const sessionCache = useRef<Record<string, Session>>({});
 
   async function enrichNotices(notices: Notice[]): Promise<Notice[]> {
-    const truckIds = [...new Set(notices.map(n => n.truck_id).filter(Boolean) as string[])].filter(id => !truckCache.current[id]);
-    const ownerIds = [...new Set(notices.map(n => n.owner_id).filter(Boolean) as string[])].filter(id => !ownerCache.current[id]);
+    // Step 1: for notices that have session_id but no truck_id/owner_id, fetch the session first
+    const sessionIds = [...new Set(
+      notices
+        .filter(n => n.session_id && (!n.truck_id || !n.owner_id))
+        .map(n => n.session_id as string)
+    )].filter(id => !sessionCache.current[id]);
+
+    await Promise.allSettled(
+      sessionIds.map(id =>
+        apiFetch<Session>(`/parking-sessions/${id}`)
+          .then(s => { sessionCache.current[id] = s; })
+          .catch(() => {})
+      )
+    );
+
+    // Step 2: resolve effective truck/owner IDs (notice direct or via session fallback)
+    const effectiveIds = notices.map(n => {
+      const sess = n.session_id ? sessionCache.current[n.session_id] : undefined;
+      return {
+        truckId: n.truck_id ?? sess?.truck_id ?? null,
+        ownerId: n.owner_id ?? sess?.owner_id ?? null,
+      };
+    });
+
+    const truckIds = [...new Set(effectiveIds.map(e => e.truckId).filter(Boolean) as string[])].filter(id => !truckCache.current[id]);
+    const ownerIds = [...new Set(effectiveIds.map(e => e.ownerId).filter(Boolean) as string[])].filter(id => !ownerCache.current[id]);
     const adminIds = [...new Set(notices.map(n => n.created_by).filter(Boolean) as string[])].filter(id => !adminCache.current[id]);
+
     await Promise.allSettled([
       ...truckIds.map(id => apiFetch<TruckObj>(`/trucks/${id}`).then(t => { truckCache.current[id] = t; }).catch(() => {})),
       ...ownerIds.map(id => apiFetch<Owner>(`/owners/${id}`).then(o => { ownerCache.current[id] = o; }).catch(() => {})),
       ...adminIds.map(id => apiFetch<AdminUser>(`/admin-users/${id}`).then(a => { adminCache.current[id] = a.name; }).catch(() => {})),
     ]);
-    return notices.map(n => ({
-      ...n,
-      truck_number:    n.truck_id   ? truckCache.current[n.truck_id]?.truck_number : undefined,
-      owner_name:      n.owner_id   ? ownerCache.current[n.owner_id]?.name : undefined,
-      owner_mobile:    n.owner_id   ? ownerCache.current[n.owner_id]?.primary_mobile : undefined,
-      created_by_name: n.created_by ? adminCache.current[n.created_by] : undefined,
-    }));
+
+    return notices.map((n, i) => {
+      const { truckId, ownerId } = effectiveIds[i];
+      return {
+        ...n,
+        truck_number:    truckId ? (truckCache.current[truckId]?.truck_number ?? n.truck_number) : n.truck_number,
+        owner_name:      ownerId ? (ownerCache.current[ownerId]?.name          ?? n.owner_name)   : n.owner_name,
+        owner_mobile:    ownerId ? (ownerCache.current[ownerId]?.primary_mobile ?? n.owner_mobile) : n.owner_mobile,
+        created_by_name: n.created_by ? (adminCache.current[n.created_by]      ?? n.created_by_name) : n.created_by_name,
+      };
+    });
   }
 
   const fetchActive = useCallback(async () => {

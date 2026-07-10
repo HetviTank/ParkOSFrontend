@@ -65,8 +65,9 @@ export default function BlacklistPage() {
   const [fSuccess, setFSuccess] = useState(false);
 
   // remove
-  const [removing,    setRemoving]    = useState<string | null>(null);
-  const [removeError, setRemoveError] = useState("");
+  const [removing,       setRemoving]       = useState<string | null>(null);
+  const [removeError,    setRemoveError]    = useState("");
+  const [removeSuccess,  setRemoveSuccess]  = useState("");
 
   // admin name cache
   const adminCache = useRef<Record<string, string>>({});
@@ -126,9 +127,11 @@ export default function BlacklistPage() {
   }
 
   async function handleRemove(item: Blacklist) {
-    setRemoving(item.id); setRemoveError("");
+    setRemoving(item.id); setRemoveError(""); setRemoveSuccess("");
     try {
       await apiFetch(`/blacklists/${item.id}`, { method: "DELETE" });
+      setRemoveSuccess(`${item.truck_number} removed from blacklist successfully.`);
+      setTimeout(() => setRemoveSuccess(""), 4000);
       const goPage = list.length === 1 && page > 1 ? page - 1 : page;
       setPage(goPage);
       if (goPage === page) fetchList(page, search);
@@ -285,6 +288,14 @@ export default function BlacklistPage() {
             </div>
           )}
 
+          {/* Remove success */}
+          {removeSuccess && (
+            <div className="flex items-center gap-2.5 mx-4 my-2 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+              <p className="text-sm text-emerald-700 font-semibold">{removeSuccess}</p>
+            </div>
+          )}
+
           {/* Remove error */}
           {removeError && (
             <div className="flex items-center gap-2.5 mx-4 my-2 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
@@ -336,11 +347,11 @@ export default function BlacklistPage() {
                 <button
                   onClick={() => handleRemove(item)}
                   disabled={removing === item.id}
-                  className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:bg-emerald-300 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-sm shadow-emerald-200 transition shrink-0 whitespace-nowrap"
+                  className="flex items-center gap-1.5 bg-red-100 hover:bg-red-200 active:bg-red-300 disabled:opacity-50 text-red-700 text-xs font-bold px-3.5 py-2 rounded-xl border border-red-200 transition shrink-0 whitespace-nowrap"
                 >
                   {removing === item.id
                     ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Removing…</>
-                    : <><ShieldCheck className="w-3.5 h-3.5" />Remove &amp; allow</>}
+                    : <><Trash2 className="w-3.5 h-3.5" />Remove</>}
                 </button>
               </div>
             ))}

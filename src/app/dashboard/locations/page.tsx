@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   ChevronRight, Plus, X, Loader2, AlertCircle, CheckCircle2,
-  MapPin, Settings, Zap, ZapOff, Layers, IndianRupee, ChevronDown,
+  MapPin, Settings, Zap, ZapOff,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -27,11 +27,10 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
 }
 
 // ── types ─────────────────────────────────────────────────────────────────────
-interface Location   { id: string; name: string; city: string | null; address: string | null; operator: string | null; is_active: boolean }
-interface Division   { id: string; name: string; location: string; truck_type: string; total_slots: number; rate_per_day: number; gst_percent: number; status: string }
+interface Location   { id: string; name: string; city: string | null; address: string | null; operator: string | { name?: string } | null; is_active: boolean }
+interface Division   { id: string; name: string; location?: string | null; location_id?: string | null; truck_type: string; total_slots: number; rate_per_day: number; gst_percent: number; status: string }
 interface DivOcc     { division_id: string; division_name: string; truck_type: string; total_slots: number; occupied_slots: number; occupancy_percent: number }
 interface DashResp   { division_occupancy: DivOcc[] }
-interface AdminUser  { id: string; name: string }
 
 interface EnrichedLoc {
   loc: Location;
@@ -55,21 +54,18 @@ function divPill(type: string): { bg: string; text: string; border: string } {
 }
 
 const inputCls = "w-full px-3.5 py-2.5 text-sm text-gray-900 bg-gray-50 border border-gray-200 rounded-xl placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition";
-const selectCls = "w-full appearance-none px-3.5 py-2.5 text-sm text-gray-900 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition pr-9";
 
 // ── page ──────────────────────────────────────────────────────────────────────
 export default function LocationsPage() {
   const [rows,    setRows]    = useState<EnrichedLoc[]>([]);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState("");
-  const [admins,  setAdmins]  = useState<AdminUser[]>([]);
 
   // add-location drawer
   const [addOpen,  setAddOpen]  = useState(false);
   const [fName,    setFName]    = useState("");
   const [fCity,    setFCity]    = useState("");
   const [fAddress, setFAddress] = useState("");
-  const [fOpId,    setFOpId]    = useState("");
   const [fErr,     setFErr]     = useState("");
   const [fBusy,    setFBusy]    = useState(false);
   const [fOk,      setFOk]      = useState(false);
@@ -79,13 +75,9 @@ export default function LocationsPage() {
   const [cfgName,  setCfgName]  = useState("");
   const [cfgCity,  setCfgCity]  = useState("");
   const [cfgAddr,  setCfgAddr]  = useState("");
-  const [cfgOpId,  setCfgOpId]  = useState("");
   const [cfgErr,   setCfgErr]   = useState("");
   const [cfgBusy,  setCfgBusy]  = useState(false);
   const [cfgOk,    setCfgOk]    = useState(false);
-
-  // add-division inline state: { [locId]: {open, name, type, slots, rate, busy, err} }
-  const [divForms, setDivForms] = useState<Record<string, { open: boolean; name: string; type: string; slots: string; rate: string; busy: boolean; err: string }>>({});
 
   // activate busy
   const [activating, setActivating] = useState<string | null>(null);
@@ -93,10 +85,6 @@ export default function LocationsPage() {
   const addDrawerRef = useRef<HTMLDivElement>(null);
   const cfgDrawerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    apiFetch<{ count: number; list: AdminUser[] }>("/admin-users?limit=100")
-      .then(r => setAdmins(r.list ?? [])).catch(() => {});
-  }, []);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -116,7 +104,7 @@ export default function LocationsPage() {
       occ.forEach(o => { occMap[o.division_id] = o; });
 
       const enriched: EnrichedLoc[] = locs.map(loc => {
-        const myDivs   = divs.filter(d => d.location === loc.id);
+        const myDivs   = divs.filter(d => (d.location_id ?? d.location) === loc.id);
         const totalSlots = myDivs.reduce((s, d) => s + (d.total_slots ?? 0), 0);
         const occupied   = myDivs.reduce((s, d) => s + (occMap[d.id]?.occupied_slots ?? 0), 0);
         return { loc, divisions: myDivs, totalSlots, occupied, free: totalSlots - occupied };
@@ -146,9 +134,9 @@ export default function LocationsPage() {
     try {
       await apiFetch<Location>("/locations", {
         method: "POST",
-        body: JSON.stringify({ name: fName.trim(), city: fCity.trim() || null, address: fAddress.trim() || null, operator_id: fOpId || null }),
+        body: JSON.stringify({ name: fName.trim(), city: fCity.trim() || null, address: fAddress.trim() || null }),
       });
-      setFOk(true); setFName(""); setFCity(""); setFAddress(""); setFOpId("");
+      setFOk(true); setFName(""); setFCity(""); setFAddress("");
       setTimeout(() => { setAddOpen(false); setFOk(false); load(); }, 1200);
     } catch (e) { setFErr(e instanceof Error ? e.message : "Failed."); }
     finally { setFBusy(false); }
@@ -156,7 +144,7 @@ export default function LocationsPage() {
 
   function openConfigure(row: EnrichedLoc) {
     setCfgLoc(row); setCfgName(row.loc.name); setCfgCity(row.loc.city ?? "");
-    setCfgAddr(row.loc.address ?? ""); setCfgOpId(""); setCfgErr(""); setCfgOk(false);
+    setCfgAddr(row.loc.address ?? ""); setCfgErr(""); setCfgOk(false);
   }
 
   async function handleConfigure(e: { preventDefault(): void }) {
@@ -167,7 +155,7 @@ export default function LocationsPage() {
     try {
       await apiFetch<Location>(`/locations/${cfgLoc.loc.id}`, {
         method: "PUT",
-        body: JSON.stringify({ name: cfgName.trim(), city: cfgCity.trim() || null, address: cfgAddr.trim() || null, operator_id: cfgOpId || null, is_active: cfgLoc.loc.is_active }),
+        body: JSON.stringify({ name: cfgName.trim(), city: cfgCity.trim() || null, address: cfgAddr.trim() || null, is_active: cfgLoc.loc.is_active }),
       });
       setCfgOk(true);
       setTimeout(() => { setCfgLoc(null); setCfgOk(false); load(); }, 1200);
@@ -187,30 +175,6 @@ export default function LocationsPage() {
     finally { setActivating(null); }
   }
 
-  function setDivField(locId: string, field: string, value: string) {
-    setDivForms(p => ({ ...p, [locId]: { ...(p[locId] ?? { open: true, name: "", type: "heavy", slots: "", rate: "", busy: false, err: "" }), [field]: value } }));
-  }
-
-  async function handleAddDiv(locId: string) {
-    const f = divForms[locId];
-    if (!f) return;
-    if (!f.name.trim()) { setDivField(locId, "err", "Division name required."); return; }
-    if (!f.slots || isNaN(Number(f.slots))) { setDivField(locId, "err", "Valid slot count required."); return; }
-    if (!f.rate || isNaN(Number(f.rate))) { setDivField(locId, "err", "Valid rate required."); return; }
-    setDivField(locId, "busy", "true");
-    try {
-      await apiFetch("/divisions", {
-        method: "POST",
-        body: JSON.stringify({ name: f.name.trim(), location_id: locId, truck_type: f.type, total_slots: Number(f.slots), rate_per_day: Number(f.rate), status: "active" }),
-      });
-      setDivForms(p => { const n = { ...p }; delete n[locId]; return n; });
-      load();
-    } catch (e) {
-      setDivField(locId, "err", e instanceof Error ? e.message : "Failed.");
-      setDivField(locId, "busy", "false");
-    }
-  }
-
   return (
     <div className="px-4 sm:px-5 lg:px-6 py-5 w-full space-y-5">
 
@@ -225,7 +189,7 @@ export default function LocationsPage() {
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Locations</h1>
           <p className="text-sm text-gray-400 mt-0.5">Configure parking yards, assign operators, and manage divisions per site.</p>
         </div>
-        <button onClick={() => { setAddOpen(true); setFName(""); setFCity(""); setFAddress(""); setFOpId(""); setFErr(""); setFOk(false); }}
+        <button onClick={() => { setAddOpen(true); setFName(""); setFCity(""); setFAddress(""); setFErr(""); setFOk(false); }}
           className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2.5 rounded-xl shadow-sm shadow-blue-200 transition whitespace-nowrap self-start sm:self-auto">
           <Plus className="w-4 h-4" />Add location
         </button>
@@ -253,9 +217,8 @@ export default function LocationsPage() {
       {/* location cards */}
       <div className="space-y-4">
         {rows.map(row => {
-          const { loc, divisions, totalSlots, occupied, free } = row;
+          const { loc, totalSlots, occupied, free } = row;
           const isActive = loc.is_active;
-          const df = divForms[loc.id];
 
           return (
             <div key={loc.id}
@@ -296,112 +259,26 @@ export default function LocationsPage() {
               </div>
 
               {isActive && (
-                <>
-                  {/* slot stats */}
-                  <div className="grid grid-cols-3 gap-0 border-t border-gray-100 divide-x divide-gray-100">
-                    <div className="bg-blue-50/60 px-5 py-3.5">
-                      <p className="text-xs font-semibold text-blue-500 mb-0.5">Total slots</p>
-                      <p className="text-2xl font-black text-blue-700">{totalSlots}</p>
-                    </div>
-                    <div className="bg-red-50/60 px-5 py-3.5">
-                      <p className="text-xs font-semibold text-red-500 mb-0.5">Occupied</p>
-                      <p className="text-2xl font-black text-red-600">{occupied}</p>
-                    </div>
-                    <div className="bg-emerald-50/60 px-5 py-3.5">
-                      <p className="text-xs font-semibold text-emerald-500 mb-0.5">Free</p>
-                      <p className="text-2xl font-black text-emerald-600">{free >= 0 ? free : 0}</p>
-                    </div>
+                <div className="grid grid-cols-3 gap-0 border-t border-gray-100 divide-x divide-gray-100">
+                  <div className="bg-blue-50/60 px-5 py-3.5">
+                    <p className="text-xs font-semibold text-blue-500 mb-0.5">Total slots</p>
+                    <p className="text-2xl font-black text-blue-700">{totalSlots}</p>
                   </div>
-
-                  {/* divisions */}
-                  <div className="px-5 py-4 border-t border-gray-100/60">
-                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
-                      Divisions configured
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {divisions.length === 0 && !df?.open && (
-                        <p className="text-xs text-gray-400 italic">No divisions yet.</p>
-                      )}
-                      {divisions.map(div => {
-                        const p = divPill(div.truck_type);
-                        return (
-                          <span key={div.id}
-                            className={`text-xs font-semibold px-3 py-1.5 rounded-full border ${p.bg} ${p.text} ${p.border}`}>
-                            {div.name} — {div.truck_type.charAt(0).toUpperCase() + div.truck_type.slice(1)}
-                            {div.total_slots ? ` · ${div.total_slots} slots` : ""}
-                            {div.rate_per_day ? ` · ₹${div.rate_per_day}/day` : ""}
-                          </span>
-                        );
-                      })}
-
-                      {/* add division toggle */}
-                      {!df?.open && (
-                        <button onClick={() => setDivForms(p => ({ ...p, [loc.id]: { open: true, name: "", type: "heavy", slots: "", rate: "", busy: false, err: "" } }))}
-                          className="flex items-center gap-1 text-xs font-semibold text-gray-400 hover:text-blue-600 bg-white border border-dashed border-gray-300 hover:border-blue-400 px-3 py-1.5 rounded-full transition">
-                          <Plus className="w-3 h-3" />Add division
-                        </button>
-                      )}
-                    </div>
-
-                    {/* inline add division form */}
-                    {df?.open && (
-                      <div className="mt-3 p-4 bg-gray-50 border border-gray-200 rounded-2xl space-y-3">
-                        <div className="flex items-center justify-between">
-                          <p className="text-xs font-bold text-gray-700">New division</p>
-                          <button onClick={() => setDivForms(p => { const n = { ...p }; delete n[loc.id]; return n; })}
-                            className="text-gray-400 hover:text-gray-700"><X className="w-3.5 h-3.5" /></button>
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                          <div>
-                            <label className="block text-[10px] font-semibold text-gray-500 mb-1">Name *</label>
-                            <input value={df.name} onChange={e => setDivField(loc.id, "name", e.target.value)}
-                              placeholder="Div A" className={inputCls + " text-xs py-2"} />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-semibold text-gray-500 mb-1">Truck type *</label>
-                            <div className="relative">
-                              <select value={df.type} onChange={e => setDivField(loc.id, "type", e.target.value)}
-                                className={selectCls + " text-xs py-2"}>
-                                <option value="heavy">Heavy</option>
-                                <option value="medium">Medium</option>
-                                <option value="light">Light</option>
-                              </select>
-                              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
-                            </div>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-semibold text-gray-500 mb-1">Slots *</label>
-                            <input value={df.slots} onChange={e => setDivField(loc.id, "slots", e.target.value.replace(/\D/g,""))}
-                              placeholder="20" className={inputCls + " text-xs py-2"} />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-semibold text-gray-500 mb-1">₹/day *</label>
-                            <input value={df.rate} onChange={e => setDivField(loc.id, "rate", e.target.value.replace(/\D/g,""))}
-                              placeholder="400" className={inputCls + " text-xs py-2"} />
-                          </div>
-                        </div>
-                        {df.err && <p className="text-xs text-red-600">{df.err}</p>}
-                        <div className="flex gap-2">
-                          <button onClick={() => handleAddDiv(loc.id)} disabled={df.busy === true || String(df.busy) === "true"}
-                            className="flex items-center gap-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 px-3 py-2 rounded-xl transition">
-                            {(df.busy === true || String(df.busy) === "true") ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                            Add
-                          </button>
-                          <button onClick={() => setDivForms(p => { const n = { ...p }; delete n[loc.id]; return n; })}
-                            className="text-xs font-semibold text-gray-500 bg-white border border-gray-200 px-3 py-2 rounded-xl hover:bg-gray-50 transition">
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                  <div className="bg-red-50/60 px-5 py-3.5">
+                    <p className="text-xs font-semibold text-red-500 mb-0.5">Occupied</p>
+                    <p className="text-2xl font-black text-red-600">{occupied}</p>
                   </div>
-                </>
+                  <div className="bg-emerald-50/60 px-5 py-3.5">
+                    <p className="text-xs font-semibold text-emerald-500 mb-0.5">Free</p>
+                    <p className="text-2xl font-black text-emerald-600">{free >= 0 ? free : 0}</p>
+                  </div>
+                </div>
               )}
 
               {!isActive && (
                 <div className="px-5 py-3 border-t border-gray-100">
                   <p className="text-xs text-gray-400 italic flex items-center gap-1.5">
-                    <ZapOff className="w-3.5 h-3.5" />No divisions configured. Activate to set up.
+                    <ZapOff className="w-3.5 h-3.5" />Activate this location to start tracking slots.
                   </p>
                 </div>
               )}
@@ -442,21 +319,9 @@ export default function LocationsPage() {
                 <input value={fName} onChange={e => { setFName(e.target.value); setFErr(""); }}
                   placeholder="e.g. Bhuj Gate — North Yard" className={inputCls} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">City</label>
-                  <input value={fCity} onChange={e => setFCity(e.target.value)} placeholder="Bhuj" className={inputCls} />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">Operator</label>
-                  <div className="relative">
-                    <select value={fOpId} onChange={e => setFOpId(e.target.value)} className={selectCls}>
-                      <option value="">None</option>
-                      {admins.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                  </div>
-                </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">City</label>
+                <input value={fCity} onChange={e => setFCity(e.target.value)} placeholder="Bhuj" className={inputCls} />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1.5">Address</label>
@@ -507,21 +372,9 @@ export default function LocationsPage() {
                 <label className="block text-xs font-semibold text-gray-600 mb-1.5">Location name <span className="text-red-400">*</span></label>
                 <input value={cfgName} onChange={e => { setCfgName(e.target.value); setCfgErr(""); }} className={inputCls} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">City</label>
-                  <input value={cfgCity} onChange={e => setCfgCity(e.target.value)} className={inputCls} />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">Operator</label>
-                  <div className="relative">
-                    <select value={cfgOpId} onChange={e => setCfgOpId(e.target.value)} className={selectCls}>
-                      <option value="">Unchanged</option>
-                      {admins.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                  </div>
-                </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">City</label>
+                <input value={cfgCity} onChange={e => setCfgCity(e.target.value)} className={inputCls} />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1.5">Address</label>

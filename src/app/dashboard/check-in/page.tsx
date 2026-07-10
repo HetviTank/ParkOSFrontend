@@ -42,7 +42,7 @@ function nowTimeStr() {
 const fmt = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 
 // ── local types ───────────────────────────────────────────────────────────────
-interface TruckItem  { id: string; truck_number: string; truck_type: string; owner_id: string | null }
+interface TruckItem  { id: string; truck_number: string; truck_type: string; owner_id: string | null; is_deleted?: boolean | null }
 interface OwnerItem  { id: string; name: string; primary_mobile: string; company: string | null; alternate_mobile: string | null }
 interface LocItem    { id: string; name: string; city: string | null }
 interface DivItem    { id: string; name: string; truck_type: string; rate_per_day: number; gst_percent: number | null; status: string; total_slots?: number }
@@ -121,8 +121,15 @@ export default function CheckInPage() {
   const [checkInTime, setCheckInTime] = useState(nowTimeStr());
 
   // ── blacklist
-  const [showBlacklisted, setShowBlacklisted] = useState(false);
+  const [showBlacklisted,  setShowBlacklisted]  = useState(false);
   const [blacklistReason,  setBlacklistReason]  = useState("");
+
+  // ── deleted truck
+  const [showDeletedTruck, setShowDeletedTruck] = useState(false);
+
+  // ── already checked in
+  const [showAlreadyIn,    setShowAlreadyIn]    = useState(false);
+  const [alreadyInSince,   setAlreadyInSince]   = useState<string | null>(null);
 
   // ── submit
   const [submitting, setSubmitting]   = useState(false);
@@ -234,13 +241,35 @@ export default function CheckInPage() {
     searchRef.current = setTimeout(async () => {
       setSearchLoading(true);
       try {
-        // ── blacklist check first ──────────────────────────────────────────
-        const blRes = await apiFetch<{ list: { truck_number: string; reason: string; is_active: boolean }[] }>(
-          `/blacklists?search=${encodeURIComponent(number)}&limit=10`
-        ).catch(() => ({ list: [] }));
-        const blEntry = blRes.list?.find(
-          b => b.is_active && b.truck_number.toUpperCase() === number.trim().toUpperCase()
-        );
+        type BlEntry = { truck_number: string; reason: string; is_active: boolean | null };
+        const normalizedInput = number.trim().toUpperCase().replace(/\s+/g, "");
+
+        // ── 1. find the truck ──────────────────────────────────────────────
+        const r = await apiFetch<{ list: TruckItem[] }>(`/trucks?search=${encodeURIComponent(number)}&limit=5`);
+        const match = r.list.find((t) => t.truck_number.toLowerCase() === number.toLowerCase());
+
+        // ── 2. blacklist check ────────────────────────────────────────────
+        // Primary: check by truck_id (reliable if entry has truck_id)
+        // Fallback: check by truck_number with space-normalised comparison
+        let blEntry: BlEntry | undefined;
+
+        if (match) {
+          const blById = await apiFetch<{ list: BlEntry[] }>(
+            `/blacklists?truck_id=${match.id}&limit=5`
+          ).catch(() => ({ list: [] as BlEntry[] }));
+          blEntry = blById.list?.find(b => b.is_active !== false);
+        }
+
+        if (!blEntry) {
+          const blByNum = await apiFetch<{ list: BlEntry[] }>(
+            `/blacklists?search=${encodeURIComponent(number.trim())}&limit=20`
+          ).catch(() => ({ list: [] as BlEntry[] }));
+          blEntry = blByNum.list?.find(
+            b => b.is_active !== false &&
+            b.truck_number.toUpperCase().replace(/\s+/g, "") === normalizedInput
+          );
+        }
+
         if (blEntry) {
           setBlacklistReason(blEntry.reason || "No reason provided.");
           setShowBlacklisted(true);
@@ -248,9 +277,25 @@ export default function CheckInPage() {
           return;
         }
 
-        const r = await apiFetch<{ list: TruckItem[] }>(`/trucks?search=${encodeURIComponent(number)}&limit=5`);
-        const match = r.list.find((t) => t.truck_number.toLowerCase() === number.toLowerCase());
+        // ── 3. deleted-truck check ─────────────────────────────────────────
         if (match) {
+          if (match.is_deleted) {
+            setShowDeletedTruck(true);
+            setTruckFound(null); setTruckId(null);
+            return;
+          }
+
+          // ── 4. already-parked check ────────────────────────────────────
+          const sessRes = await apiFetch<{ count: number; list: { check_in_time: string | null }[] }>(
+            `/parking-sessions?truck_id=${match.id}&status=parked&limit=1`
+          ).catch(() => ({ count: 0, list: [] }));
+          if (sessRes.count > 0) {
+            setAlreadyInSince(sessRes.list[0]?.check_in_time ?? null);
+            setShowAlreadyIn(true);
+            setTruckFound(null); setTruckId(null);
+            return;
+          }
+
           setTruckId(match.id);
           setTruckType(match.truck_type);
           setTruckFound(true);
@@ -811,6 +856,71 @@ export default function CheckInPage() {
             )}
             <button
               onClick={() => { setShowBlacklisted(false); setTruckNumber(""); setTruckFound(null); setTruckId(null); }}
+              className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold transition"
+            >
+              Understood — Go back
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── already checked-in modal ─────────────────────────────────────── */}
+      {showAlreadyIn && typeof window !== "undefined" && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div className="relative bg-white rounded-3xl shadow-2xl px-10 py-10 flex flex-col items-center text-center max-w-sm w-full mx-4">
+            <div className="relative mb-6">
+              <div className="w-24 h-24 rounded-full border-4 border-amber-400 animate-ping absolute inset-0 opacity-20" />
+              <div className="w-24 h-24 rounded-full border-4 border-amber-300 bg-amber-50 flex items-center justify-center">
+                <TruckIcon className="w-12 h-12 text-amber-500" strokeWidth={1.5} />
+              </div>
+            </div>
+            <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Already Checked In</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              This truck is <span className="font-semibold text-amber-600">currently parked</span> and cannot be checked in again.
+            </p>
+            {alreadyInSince && (
+              <div className="w-full bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-5">
+                <p className="text-xs font-semibold text-amber-400 uppercase tracking-widest mb-1">Checked in since</p>
+                <p className="text-sm text-amber-700 font-medium">
+                  {new Date(alreadyInSince).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
+                </p>
+              </div>
+            )}
+            <button
+              onClick={() => { setShowAlreadyIn(false); setTruckNumber(""); setTruckFound(null); setTruckId(null); }}
+              className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-semibold transition"
+            >
+              Understood — Go back
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── deleted truck modal ──────────────────────────────────────────── */}
+      {showDeletedTruck && typeof window !== "undefined" && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div className="relative bg-white rounded-3xl shadow-2xl px-10 py-10 flex flex-col items-center text-center max-w-sm w-full mx-4">
+            <div className="relative mb-6">
+              <div className="w-24 h-24 rounded-full border-4 border-red-400 animate-ping absolute inset-0 opacity-20" />
+              <div className="w-24 h-24 rounded-full border-4 border-red-300 bg-red-50 flex items-center justify-center">
+                <TruckIcon className="w-12 h-12 text-red-500" strokeWidth={1.5} />
+              </div>
+            </div>
+            <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Truck Blocked</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Truck <span className="font-bold text-red-600 font-mono tracking-wider">{truckNumber}</span> has been removed from the system and{" "}
+              <span className="font-semibold text-red-600">cannot be checked in</span>.
+            </p>
+            <div className="w-full bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-5">
+              <p className="text-xs font-semibold text-red-400 uppercase tracking-widest mb-1">Status</p>
+              <p className="text-sm text-red-700 font-medium">This truck is marked as deleted in the system. Contact your administrator to restore it.</p>
+            </div>
+            <button
+              onClick={() => { setShowDeletedTruck(false); setTruckNumber(""); setTruckFound(null); setTruckId(null); }}
               className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold transition"
             >
               Understood — Go back

@@ -9,7 +9,7 @@ import {
   Truck as TruckIcon, User, Clock, Search, Check,
   AlertCircle, Loader2, CheckCircle2, ChevronRight,
   IndianRupee, MapPin, Calendar, ShieldCheck, ShieldAlert, ShieldX,
-  Banknote, CreditCard, Smartphone, Receipt, BookOpen,
+  Banknote, CreditCard, Smartphone, Receipt, BookOpen, Zap, Info, X as XIcon,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -130,6 +130,15 @@ export default function CheckOutPage() {
   const [showBlacklisted, setShowBlacklisted] = useState(false);
   const [blacklistReason, setBlacklistReason] = useState("");
 
+  // force checkout
+  const [showForceModal,     setShowForceModal]     = useState(false);
+  const [forceSessions,      setForceSessions]      = useState<SessionItem[]>([]);
+  const [forceLoading,       setForceLoading]       = useState(false);
+  const [forceSelected,      setForceSelected]      = useState<SessionItem | null>(null);
+  const [forceReason,        setForceReason]        = useState("");
+  const [forceBusy,          setForceBusy]          = useState(false);
+  const [forceErr,           setForceErr]           = useState("");
+
   // live duration tick
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -166,6 +175,72 @@ export default function CheckOutPage() {
   const totalAmt = subtotal + gstAmt;
   const received = parseFloat(amtReceived) || 0;
   const changeDue = Math.max(0, received - totalAmt);
+
+  // ── force checkout ──────────────────────────────────────────────────────────
+  async function openForceCheckout() {
+    if (!truck) return;
+    setForceLoading(true); setForceErr(""); setForceSelected(null); setForceReason("");
+    setShowForceModal(true);
+    try {
+      const res = await apiFetch<{ count: number; list: SessionItem[] }>(
+        `/parking-sessions?truck_id=${truck.id}&limit=5&sort_by=created_at&order=desc`
+      );
+      setForceSessions(res.list ?? []);
+      if (res.list?.length) setForceSelected(res.list[0]);
+    } catch { setForceErr("Could not load sessions for this truck."); }
+    finally { setForceLoading(false); }
+  }
+
+  async function submitForceCheckout() {
+    if (!forceSelected) { setForceErr("Select a session to force-close."); return; }
+    setForceBusy(true); setForceErr("");
+    try {
+      const nowISO   = new Date().toISOString();
+      const finalDays = Math.max(1, forceSelected.check_in_time
+        ? Math.ceil((Date.now() - new Date(forceSelected.check_in_time).getTime()) / 86_400_000)
+        : 1);
+      const finalSub   = finalDays * forceSelected.rate_per_day;
+      const finalGst   = Math.round(finalSub * forceSelected.gst_percent / 100 * 100) / 100;
+      const finalTotal = finalSub + finalGst;
+      await apiFetch(`/parking-sessions/${forceSelected.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          truck_id:               forceSelected.truck_id,
+          owner_id:               forceSelected.owner_id,
+          location_id:            forceSelected.location_id,
+          division_id:            forceSelected.division_id,
+          slot_id:                forceSelected.slot_id,
+          entry_type:             forceSelected.entry_type,
+          checkin_driver_name:    forceSelected.checkin_driver_name,
+          checkin_driver_mobile:  forceSelected.checkin_driver_mobile,
+          checkin_driver_licence: forceSelected.checkin_driver_licence,
+          checkin_id_proof_type:  forceSelected.checkin_id_proof_type,
+          check_in_time:          forceSelected.check_in_time,
+          checkin_remarks:        forceSelected.checkin_remarks,
+          checkout_driver_name:   "Force checkout",
+          checkout_driver_mobile: forceSelected.checkin_driver_mobile,
+          driver_match:           "match",
+          check_out_time:         nowISO,
+          checkout_remarks:       forceReason.trim() || "Force checkout by admin",
+          rate_per_day:           forceSelected.rate_per_day,
+          gst_percent:            forceSelected.gst_percent,
+          days:                   finalDays,
+          subtotal:               finalSub,
+          gst_amount:             finalGst,
+          total_amount:           finalTotal,
+          status:                 "released",
+        }),
+      });
+      setShowForceModal(false);
+      setSearchError("");
+      setDone({ sessionId: forceSelected.id, total: finalTotal });
+      setTimeout(() => router.push("/dashboard/trucks"), 2500);
+    } catch (err) {
+      setForceErr(err instanceof Error ? err.message : "Force checkout failed.");
+    } finally {
+      setForceBusy(false);
+    }
+  }
 
   // ── search ──────────────────────────────────────────────────────────────────
   async function handleSearch(overrideQ?: string) {
@@ -429,6 +504,130 @@ export default function CheckOutPage() {
         document.body
       )}
 
+      {/* ── Force checkout modal ── */}
+      {showForceModal && typeof window !== "undefined" && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !forceBusy && setShowForceModal(false)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+
+            {/* header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-amber-50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 bg-amber-100 rounded-xl flex items-center justify-center">
+                  <Zap className="w-4 h-4 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-gray-900">Force checkout</p>
+                  <p className="text-xs text-amber-600 font-mono font-semibold">{truck?.truck_number}</p>
+                </div>
+              </div>
+              <button onClick={() => setShowForceModal(false)} disabled={forceBusy}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition">
+                <XIcon className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-4">
+              {/* explanation */}
+              <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-3">
+                <Info className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700">
+                  Force checkout manually closes an existing session. Use only when the truck physically left without a proper check-out.
+                </p>
+              </div>
+
+              {/* session list */}
+              {forceLoading ? (
+                <div className="flex items-center justify-center gap-2 py-6 text-gray-400">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span className="text-sm">Loading sessions…</span>
+                </div>
+              ) : forceSessions.length === 0 ? (
+                <div className="text-center py-6">
+                  <AlertCircle className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+                  <p className="text-sm font-semibold text-gray-500">No sessions found</p>
+                  <p className="text-xs text-gray-400 mt-1">This truck has never been checked in via the system.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-gray-600">Select session to force-close</p>
+                  {forceSessions.map(s => {
+                    const sel = forceSelected?.id === s.id;
+                    const isParked = s.status === "parked";
+                    return (
+                      <button key={s.id} type="button"
+                        onClick={() => { setForceSelected(s); setForceErr(""); }}
+                        className={`w-full text-left flex items-start gap-3 px-3.5 py-3 rounded-xl border transition ${
+                          sel ? "border-amber-400 bg-amber-50" : "border-gray-200 hover:border-amber-300 hover:bg-amber-50/50"
+                        }`}>
+                        <div className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                          sel ? "border-amber-500 bg-amber-500" : "border-gray-300"
+                        }`}>
+                          {sel && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                              isParked ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-600"
+                            }`}>
+                              {isParked ? "Parked" : s.status}
+                            </span>
+                            <span className="text-xs text-gray-400">
+                              {s.check_in_time ? fmtDateTime(s.check_in_time) : "No check-in time"}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            Driver: {s.checkin_driver_name} · {s.checkin_driver_mobile}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* reason */}
+              {forceSessions.length > 0 && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">Reason / Note</label>
+                  <textarea
+                    value={forceReason}
+                    onChange={e => setForceReason(e.target.value)}
+                    placeholder="e.g. Truck left premises without check-out, system error…"
+                    rows={2}
+                    className="w-full px-3.5 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent resize-none transition"
+                  />
+                </div>
+              )}
+
+              {forceErr && (
+                <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5">
+                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{forceErr}</p>
+                </div>
+              )}
+            </div>
+
+            {/* footer */}
+            <div className="px-6 pb-5 flex gap-3">
+              <button type="button" onClick={() => setShowForceModal(false)} disabled={forceBusy}
+                className="flex-1 py-2.5 text-sm font-semibold text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50 transition">
+                Cancel
+              </button>
+              {forceSessions.length > 0 && (
+                <button type="button" onClick={submitForceCheckout} disabled={forceBusy || !forceSelected}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-bold text-white bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 rounded-xl shadow-sm shadow-amber-200 transition">
+                  {forceBusy
+                    ? <><Loader2 className="w-4 h-4 animate-spin" />Processing…</>
+                    : <><Zap className="w-4 h-4" />Force checkout</>}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* Check-out success modal */}
       {done && typeof window !== "undefined" && createPortal(
         <div className="fixed inset-0 z-[9999] flex items-center justify-center">
@@ -530,9 +729,28 @@ export default function CheckOutPage() {
         </div>
 
         {searchError && (
-          <div className="flex items-center gap-2.5 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-            <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-            <p className="text-sm text-red-700">{searchError}</p>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2.5 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+              <p className="text-sm text-red-700 flex-1">{searchError}</p>
+            </div>
+            {/* show force-checkout option only when the truck was found but has no active session */}
+            {truck && searchError.includes("No active parking session") && (
+              <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                <Zap className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-amber-700">Force checkout available</p>
+                  <p className="text-xs text-amber-600 mt-0.5">
+                    Use this if the truck physically left but has no active session — an admin can manually close any existing session.
+                  </p>
+                </div>
+                <button
+                  onClick={openForceCheckout}
+                  className="shrink-0 flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition">
+                  <Zap className="w-3.5 h-3.5" /> Force checkout
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -664,10 +882,8 @@ export default function CheckOutPage() {
                 </div>
                 <div>
                   <label className={labelCls}>Checkout driver mobile <span className="text-red-400">*</span></label>
-                  <div className="flex rounded-xl overflow-hidden border border-gray-200 bg-gray-50 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent focus-within:bg-white transition">
-                    <span className="flex items-center px-3 bg-gray-100 border-r border-gray-200 text-sm font-mono text-gray-500 shrink-0 select-none">
-                      +91
-                    </span>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium pointer-events-none select-none">+91</span>
                     <input
                       value={coDriverMobile.replace(/^\+91/, "")}
                       onChange={(e) => {
@@ -675,10 +891,10 @@ export default function CheckOutPage() {
                         setCoDriverMobile("+91" + digits);
                         setDriverMatch(null);
                       }}
-                      placeholder="XXXXX XXXXX"
+                      placeholder="98765 43210"
                       type="tel"
                       maxLength={10}
-                      className="flex-1 px-3 py-2.5 text-sm text-gray-900 bg-transparent placeholder-gray-400 focus:outline-none font-mono"
+                      className={inputCls + " pl-9 font-mono"}
                     />
                   </div>
                 </div>
