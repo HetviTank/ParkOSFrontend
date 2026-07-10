@@ -29,8 +29,8 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
 // ── types ─────────────────────────────────────────────────────────────────────
 interface Location   { id: string; name: string; city: string | null; address: string | null; operator: string | { name?: string } | null; is_active: boolean }
 interface Division   { id: string; name: string; location?: string | null; location_id?: string | null; truck_type: string; total_slots: number; rate_per_day: number; gst_percent: number; status: string }
-interface DivOcc     { division_id: string; division_name: string; truck_type: string; total_slots: number; occupied_slots: number; occupancy_percent: number }
-interface DashResp   { division_occupancy: DivOcc[] }
+interface SlotRecord { id: string; division_id: string; status: string }
+interface SessRecord { id: string; location_id: string; status: string }
 
 interface EnrichedLoc {
   loc: Location;
@@ -43,6 +43,12 @@ interface EnrichedLoc {
 // ── helpers ───────────────────────────────────────────────────────────────────
 const AVATAR_COLORS = ["bg-blue-500","bg-violet-500","bg-indigo-500","bg-teal-500","bg-emerald-500","bg-amber-500","bg-rose-500","bg-cyan-500"];
 function avatarColor(s: string) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) & 0x7fffffff; return AVATAR_COLORS[h % AVATAR_COLORS.length]; }
+
+function operatorLabel(op: string | { name?: string } | null): string | null {
+  if (!op) return null;
+  if (typeof op === "object") return op.name ?? "Assigned";
+  return op;
+}
 
 function divPill(type: string): { bg: string; text: string; border: string } {
   switch (type.toLowerCase()) {
@@ -89,25 +95,31 @@ export default function LocationsPage() {
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const [locRes, divRes, dashRes] = await Promise.all([
+      const [locRes, divRes, slotRes, sessRes] = await Promise.all([
         apiFetch<{ count: number; list: Location[] }>("/locations?limit=100&sort_by=created_at&order=asc"),
         apiFetch<{ count: number; list: Division[] }>("/divisions?limit=200"),
-        apiFetch<DashResp>("/dashboard").catch(() => ({ division_occupancy: [] as DivOcc[] })),
+        apiFetch<{ count: number; list: SlotRecord[] }>("/slots?limit=1000").catch(() => ({ count: 0, list: [] as SlotRecord[] })),
+        apiFetch<{ count: number; list: SessRecord[] }>("/parking-sessions?status=parked&limit=1000").catch(() => ({ count: 0, list: [] as SessRecord[] })),
       ]);
 
-      const locs = locRes.list ?? [];
-      const divs = divRes.list ?? [];
-      const occ  = dashRes.division_occupancy ?? [];
+      const locs     = locRes.list  ?? [];
+      const divs     = divRes.list  ?? [];
+      const slots    = slotRes.list ?? [];
+      const sessions = sessRes.list ?? [];
 
-      // build division_id → occupancy map
-      const occMap: Record<string, DivOcc> = {};
-      occ.forEach(o => { occMap[o.division_id] = o; });
+      // slot count per division_id
+      const slotsByDiv: Record<string, number> = {};
+      slots.forEach(s => { slotsByDiv[s.division_id] = (slotsByDiv[s.division_id] ?? 0) + 1; });
+
+      // occupied (parked sessions) count per location_id
+      const occupiedByLoc: Record<string, number> = {};
+      sessions.forEach(s => { occupiedByLoc[s.location_id] = (occupiedByLoc[s.location_id] ?? 0) + 1; });
 
       const enriched: EnrichedLoc[] = locs.map(loc => {
-        const myDivs   = divs.filter(d => (d.location_id ?? d.location) === loc.id);
-        const totalSlots = myDivs.reduce((s, d) => s + (d.total_slots ?? 0), 0);
-        const occupied   = myDivs.reduce((s, d) => s + (occMap[d.id]?.occupied_slots ?? 0), 0);
-        return { loc, divisions: myDivs, totalSlots, occupied, free: totalSlots - occupied };
+        const myDivs     = divs.filter(d => (d.location_id ?? d.location) === loc.id);
+        const totalSlots = myDivs.reduce((s, d) => s + (slotsByDiv[d.id] ?? d.total_slots ?? 0), 0);
+        const occupied   = occupiedByLoc[loc.id] ?? 0;
+        return { loc, divisions: myDivs, totalSlots, occupied, free: Math.max(0, totalSlots - occupied) };
       });
 
       setRows(enriched);
@@ -233,7 +245,7 @@ export default function LocationsPage() {
                   <p className={`text-base font-bold truncate ${isActive ? "text-gray-900" : "text-gray-500"}`}>{loc.name}</p>
                   <p className="text-xs text-gray-400 mt-0.5 truncate">
                     {[loc.city, loc.address].filter(Boolean).join(", ") || "No address"}
-                    {loc.operator ? ` · Operator: ${loc.operator}` : " · No operator assigned"}
+                    {operatorLabel(loc.operator) ? ` · Operator: ${operatorLabel(loc.operator)}` : " · No operator assigned"}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
