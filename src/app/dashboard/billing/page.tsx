@@ -28,6 +28,16 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   return text ? (JSON.parse(text) as T) : ({} as T);
 }
 
+async function downloadPDF(url: string, filename: string) {
+  const res = await fetch(`${BASE_URL}${url}`, { headers: { token: getToken() } });
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = href; a.download = filename; a.click();
+  URL.revokeObjectURL(href);
+}
+
 // ── types ─────────────────────────────────────────────────────────────────────
 interface Location { id: string; name: string; city: string | null }
 interface TruckObj  { id: string; truck_number: string }
@@ -417,10 +427,17 @@ export default function BillingPage() {
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-2">
                         {isPaid && r.payment && (
-                          <button onClick={() => setReceiptId(r.payment!.id)}
-                            className="flex items-center gap-1 text-xs font-semibold text-gray-600 hover:text-blue-600 bg-gray-100 hover:bg-blue-50 border border-gray-200 hover:border-blue-200 px-2.5 py-1.5 rounded-lg transition">
-                            <Receipt className="w-3 h-3" />Receipt
-                          </button>
+                          <>
+                            <button onClick={() => setReceiptId(r.payment!.id)}
+                              className="flex items-center gap-1 text-xs font-semibold text-gray-600 hover:text-blue-600 bg-gray-100 hover:bg-blue-50 border border-gray-200 hover:border-blue-200 px-2.5 py-1.5 rounded-lg transition">
+                              <Receipt className="w-3 h-3" />Receipt
+                            </button>
+                            <button onClick={() => downloadPDF(`/payments/${r.payment!.id}/receipt/pdf`, `receipt-${r.payment!.receipt_no || r.payment!.id.slice(0, 8)}.pdf`)}
+                              title="Download PDF"
+                              className="flex items-center gap-1 text-xs font-semibold text-gray-600 hover:text-emerald-600 bg-gray-100 hover:bg-emerald-50 border border-gray-200 hover:border-emerald-200 px-2.5 py-1.5 rounded-lg transition">
+                              <FileDown className="w-3 h-3" />PDF
+                            </button>
+                          </>
                         )}
                         {isPending && r.owner_mobile && (
                           <a href={`tel:${r.owner_mobile}`}
@@ -476,10 +493,16 @@ export default function BillingPage() {
                       </span>
                     )}
                     {isPaid && r.payment && (
-                      <Link href={`/dashboard/billing/receipt?payment_id=${r.payment.id}`}
-                        className="flex items-center gap-1 text-xs font-semibold text-gray-600 bg-gray-100 border border-gray-200 px-2 py-1 rounded-lg">
-                        <Receipt className="w-3 h-3" />Receipt
-                      </Link>
+                      <>
+                        <Link href={`/dashboard/billing/receipt?payment_id=${r.payment.id}`}
+                          className="flex items-center gap-1 text-xs font-semibold text-gray-600 bg-gray-100 border border-gray-200 px-2 py-1 rounded-lg">
+                          <Receipt className="w-3 h-3" />Receipt
+                        </Link>
+                        <button onClick={() => downloadPDF(`/payments/${r.payment!.id}/receipt/pdf`, `receipt-${r.payment!.receipt_no || r.payment!.id.slice(0, 8)}.pdf`)}
+                          className="flex items-center gap-1 text-xs font-semibold text-gray-600 hover:text-emerald-600 bg-gray-100 border border-gray-200 px-2 py-1 rounded-lg">
+                          <FileDown className="w-3 h-3" />PDF
+                        </button>
+                      </>
                     )}
                     {isPending && r.owner_mobile && (
                       <a href={`tel:${r.owner_mobile}`}

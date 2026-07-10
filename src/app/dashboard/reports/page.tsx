@@ -229,7 +229,18 @@ export default function ReportsPage() {
   }, [trucks]);
 
   // export
-  function exportPDF() { window.print(); }
+  async function exportPDF() {
+    const { year, month } = months[monthIdx];
+    const monthStr = `${year}-${String(month + 1).padStart(2, "0")}`;
+    const params = new URLSearchParams({ month: monthStr });
+    if (locId) params.set("location_id", locId);
+    const res = await fetch(`${BASE_URL}/reports/pdf?${params}`, { headers: { token: getToken() } });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = href; a.download = `report-${monthStr}.pdf`; a.click();
+    URL.revokeObjectURL(href);
+  }
 
   return (
     <>
