@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   ChevronRight, ChevronDown, Plus, X, Loader2, AlertCircle,
-  CheckCircle2, Layers, Save, Truck, Zap, Percent, IndianRupee,
+  CheckCircle2, Layers, Save, Truck, Zap, Percent, IndianRupee, Timer,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -36,6 +36,7 @@ interface Division {
   total_slots: number;
   rate_per_day: number;
   gst_percent: number | null;
+  relaxation_hours?: number | null;
   status: string;
 }
 interface DivOcc {
@@ -89,6 +90,9 @@ export default function DivisionsPage() {
   const [loading,   setLoading]   = useState(false);
   const [error,     setError]     = useState("");
 
+  // system relaxation hours (global setting)
+  const [sysRelaxHours, setSysRelaxHours] = useState(0);
+
   // per-division editable state
   const [edits,   setEdits]   = useState<Record<string, { slots: string; rate: string; gst: string; status: string }>>({});
   const [saving,  setSaving]  = useState<Record<string, boolean>>({});
@@ -105,17 +109,24 @@ export default function DivisionsPage() {
 
   // add-division form
   const [addOpen,   setAddOpen]   = useState(false);
-  const [newName,   setNewName]   = useState("");
-  const [newType,   setNewType]   = useState("heavy");
-  const [newSlots,  setNewSlots]  = useState("");
-  const [newRate,   setNewRate]   = useState("");
-  const [newGst,    setNewGst]    = useState("18");
-  const [newStatus, setNewStatus] = useState("active");
+  const [newName,        setNewName]        = useState("");
+  const [newType,        setNewType]        = useState("heavy");
+  const [newSlots,       setNewSlots]       = useState("");
+  const [newRate,        setNewRate]        = useState("");
+  const [newGst,         setNewGst]         = useState("18");
+  const [newStatus,      setNewStatus]      = useState("active");
   const [newErr,    setNewErr]    = useState("");
   const [newBusy,   setNewBusy]   = useState(false);
   const [newOk,     setNewOk]     = useState(false);
 
   const formRef = useRef<HTMLDivElement>(null);
+
+  // load system relaxation hours
+  useEffect(() => {
+    apiFetch<{ relaxation_hours: number }>("/system-preferences")
+      .then(p => setSysRelaxHours(p.relaxation_hours ?? 0))
+      .catch(() => {});
+  }, []);
 
   // load locations
   useEffect(() => {
@@ -259,7 +270,8 @@ export default function DivisionsPage() {
         body: JSON.stringify({
           name: newName.trim(), location_id: selLoc, truck_type: newType,
           total_slots: Number(newSlots), rate_per_day: Number(newRate),
-          gst_percent: Number(newGst) || 18, status: newStatus,
+          gst_percent: Number(newGst) || 18,
+          status: newStatus,
         }),
       });
       // auto-create slot records so check-in can assign them
@@ -377,7 +389,7 @@ export default function DivisionsPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Total slots <span className="text-red-400">*</span></label>
                 <input type="number" min={0} value={newSlots} onChange={e => { setNewSlots(e.target.value.replace(/\D/g,"")); setNewErr(""); }}
@@ -392,6 +404,14 @@ export default function DivisionsPage() {
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">GST (%)</label>
                 <input type="number" min={0} max={100} value={newGst} onChange={e => setNewGst(e.target.value)}
                   placeholder="18" className={inputCls("focus:ring-blue-400 focus:border-blue-400")} />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Grace period (hrs)</label>
+                <div className="flex items-center gap-2 px-3.5 py-3 bg-amber-50 border border-amber-200 rounded-xl">
+                  <Timer className="w-4 h-4 text-amber-500 shrink-0" />
+                  <span className="text-sm font-bold text-amber-800">{sysRelaxHours}h</span>
+                  <span className="text-xs text-amber-600 ml-1">from system settings</span>
+                </div>
               </div>
             </div>
 
@@ -503,6 +523,11 @@ export default function DivisionsPage() {
                         <div className={`h-full ${style.occ} rounded-full transition-all duration-500`} style={{ width: `${occPct}%` }} />
                       </div>
                       <p className="text-xs font-semibold text-gray-500">{occupied}/{total > 0 ? total : div.total_slots} slots occupied</p>
+                      {sysRelaxHours > 0 && (
+                        <span className="flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">
+                          <Timer className="w-3 h-3" />{sysRelaxHours}h grace
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -525,7 +550,7 @@ export default function DivisionsPage() {
 
                 {/* editable fields */}
                 <div className="px-6 pb-5 space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     {/* total slots */}
                     <div className="bg-white/70 rounded-2xl p-3.5 border border-white shadow-sm">
                       <div className="flex items-center gap-1.5 mb-2">
@@ -563,6 +588,18 @@ export default function DivisionsPage() {
                         onChange={ev => setField(div.id, "gst", ev.target.value)}
                         className={inputCls(style.ring)}
                       />
+                    </div>
+
+                    {/* grace period */}
+                    <div className="bg-white/70 rounded-2xl p-3.5 border border-white shadow-sm">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <Timer className="w-3.5 h-3.5 text-gray-400" />
+                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wide">Grace (hrs)</label>
+                      </div>
+                      <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl">
+                        <span className="text-sm font-bold text-amber-800">{sysRelaxHours}h</span>
+                        <span className="text-[10px] text-amber-600">system setting</span>
+                      </div>
                     </div>
                   </div>
 

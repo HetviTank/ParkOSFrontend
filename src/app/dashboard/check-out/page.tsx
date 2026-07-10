@@ -34,7 +34,7 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
 // ── types ─────────────────────────────────────────────────────────────────────
 interface TruckItem { id: string; truck_number: string; truck_type: string; owner_id: string | null }
 interface OwnerItem { id: string; name: string; primary_mobile: string; company: string | null }
-interface DivItem   { id: string; name: string; rate_per_day: number; gst_percent: number | null }
+interface DivItem   { id: string; name: string; rate_per_day: number; gst_percent: number | null; relaxation_hours?: number | null }
 interface SlotItem  { id: string; code: string }
 interface LocItem   { id: string; name: string; city: string | null }
 interface SessionItem {
@@ -65,10 +65,11 @@ function normMobile(m: string): string {
 const fmt = (n: number) =>
   `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
-function billableDays(checkInTime: string | null): number {
+function billableDays(checkInTime: string | null, relaxHours = 0): number {
   if (!checkInTime) return 1;
   const ms = Date.now() - new Date(checkInTime).getTime();
-  return Math.max(1, Math.ceil(ms / 86_400_000));
+  const dayWindowMs = (86_400 + relaxHours * 3_600) * 1_000;
+  return Math.max(1, Math.ceil(ms / dayWindowMs));
 }
 
 function durationLabel(checkInTime: string | null): string {
@@ -122,6 +123,9 @@ export default function CheckOutPage() {
   const [amtReceived,    setAmtReceived]    = useState("");
   const [coRemarks,      setCoRemarks]      = useState("");
 
+  // system relaxation hours
+  const [sysRelaxHours, setSysRelaxHours] = useState(0);
+
   // khata bill
   const [khataBill,        setKhataBill]        = useState<TruckKhataBill | null>(null);
   const [khataBillLoading, setKhataBillLoading] = useState(false);
@@ -144,6 +148,13 @@ export default function CheckOutPage() {
   const [forceBusy,          setForceBusy]          = useState(false);
   const [forceErr,           setForceErr]           = useState("");
 
+  // fetch global relaxation hours on mount
+  useEffect(() => {
+    apiFetch<{ relaxation_hours: number }>("/system-preferences")
+      .then(p => setSysRelaxHours(p.relaxation_hours ?? 0))
+      .catch(() => {});
+  }, []);
+
   // live duration tick
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -165,14 +176,14 @@ export default function CheckOutPage() {
   // pre-fill amount received when session first loads
   useEffect(() => {
     if (!session) return;
-    const d   = billableDays(session.check_in_time);
+    const d   = billableDays(session.check_in_time, sysRelaxHours);
     const sub = d * session.rate_per_day;
     const gst = Math.round(sub * session.gst_percent / 100 * 100) / 100;
     setAmtReceived(String(Math.ceil(sub + gst)));
   }, [session]);
 
   // computed billing (live — re-derived on tick)
-  const days     = billableDays(session?.check_in_time ?? null);
+  const days     = billableDays(session?.check_in_time ?? null, sysRelaxHours);
   const rate     = session?.rate_per_day ?? 0;
   const gstPct   = session?.gst_percent ?? 18;
   const subtotal = days * rate;
@@ -201,9 +212,7 @@ export default function CheckOutPage() {
     setForceBusy(true); setForceErr("");
     try {
       const nowISO   = new Date().toISOString();
-      const finalDays = Math.max(1, forceSelected.check_in_time
-        ? Math.ceil((Date.now() - new Date(forceSelected.check_in_time).getTime()) / 86_400_000)
-        : 1);
+      const finalDays = billableDays(forceSelected.check_in_time, sysRelaxHours);
       const finalSub   = finalDays * forceSelected.rate_per_day;
       const finalGst   = Math.round(finalSub * forceSelected.gst_percent / 100 * 100) / 100;
       const finalTotal = finalSub + finalGst;
@@ -343,7 +352,7 @@ export default function CheckOutPage() {
     } catch { /* ignore — don't block checkout on blacklist fetch error */ }
 
     const nowISO      = new Date().toISOString();
-    const finalDays   = billableDays(session.check_in_time);
+    const finalDays   = billableDays(session.check_in_time, sysRelaxHours);
     const finalSub    = finalDays * session.rate_per_day;
     const finalGst    = Math.round(finalSub * session.gst_percent / 100 * 100) / 100;
     const finalTotal  = finalSub + finalGst;
@@ -1012,6 +1021,12 @@ export default function CheckOutPage() {
                 <Clock className="w-3.5 h-3.5" />
                 {durationLabel(session.check_in_time)} parked → {days} billing day{days !== 1 ? "s" : ""}
               </p>
+              {sysRelaxHours > 0 && (
+                <p className="text-xs text-amber-600 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5" />
+                  {sysRelaxHours}h relaxation included · 1 billing day = {24 + sysRelaxHours}h
+                </p>
+              )}
             </FormCard>
 
             {/* Khata account bill — only for khata entry type */}

@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   ChevronRight, Settings, Save, AlertCircle, CheckCircle2,
   IndianRupee, CreditCard, Smartphone, Globe, Loader2,
-  Plus, Trash2,
+  Plus, Trash2, Timer,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -69,6 +69,13 @@ export default function SettingsPage() {
   const [prefErr,   setPrefErr]   = useState("");
   const [prefBusy,  setPrefBusy]  = useState(false);
 
+  // relaxation hours — stored in backend system-preferences
+  const [relaxHours,    setRelaxHours]    = useState("0");
+  const [relaxBusy,     setRelaxBusy]     = useState(false);
+  const [relaxSaved,    setRelaxSaved]    = useState(false);
+  const [relaxErr,      setRelaxErr]      = useState("");
+  const [sysPrefCache,  setSysPrefCache]  = useState<Record<string, unknown>>({});
+
   // overdue colour rules
   const [rules,       setRules]       = useState<OverdueRule[]>([]);
   const [rulesLoading, setRulesLoading] = useState(true);
@@ -87,6 +94,35 @@ export default function SettingsPage() {
       .catch(() => {})
       .finally(() => setRulesLoading(false));
   }, []);
+
+  useEffect(() => {
+    apiFetch<Record<string, unknown>>("/system-preferences")
+      .then(p => {
+        setSysPrefCache(p);
+        setRelaxHours(String(p.relaxation_hours ?? 0));
+      })
+      .catch(() => {});
+  }, []);
+
+  async function handleSaveRelax(e: { preventDefault(): void }) {
+    e.preventDefault();
+    const h = parseInt(relaxHours, 10);
+    if (isNaN(h) || h < 0) { setRelaxErr("Must be 0 or more."); return; }
+    setRelaxBusy(true); setRelaxErr(""); setRelaxSaved(false);
+    try {
+      await apiFetch("/system-preferences", {
+        method: "PUT",
+        body: JSON.stringify({ ...sysPrefCache, relaxation_hours: h }),
+      });
+      setSysPrefCache(p => ({ ...p, relaxation_hours: h }));
+      setRelaxSaved(true);
+      setTimeout(() => setRelaxSaved(false), 2500);
+    } catch (err) {
+      setRelaxErr(err instanceof Error ? err.message : "Failed.");
+    } finally {
+      setRelaxBusy(false);
+    }
+  }
 
   function upd(key: keyof AppSettings, val: string | boolean) {
     setS(prev => ({ ...prev, [key]: val }));
@@ -398,6 +434,47 @@ export default function SettingsPage() {
             </div>
             <div className="px-6 py-4 bg-gray-50/50 border-t border-gray-100">
               <p className="text-xs text-gray-400">Changes to payment methods apply immediately to the checkout flow.</p>
+            </div>
+          </div>
+
+          {/* billing relaxation */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <Timer className="w-4 h-4 text-amber-500" />
+                <p className="text-sm font-bold text-gray-800">Billing relaxation</p>
+              </div>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Grace hours added on top of 24 h — e.g. 2 makes 1 billing day = 26 h
+              </p>
+            </div>
+            <form id="relax-form" onSubmit={handleSaveRelax} className="px-6 py-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                  Relaxation hours (0 = standard 24 h day)
+                </label>
+                <input
+                  type="number" min={0} max={23} step={1}
+                  value={relaxHours}
+                  onChange={e => { setRelaxHours(e.target.value.replace(/\D/g, "")); setRelaxErr(""); }}
+                  placeholder="0"
+                  className={inputCls}
+                />
+                {relaxHours && Number(relaxHours) > 0 && (
+                  <p className="text-xs text-amber-600 mt-1.5">
+                    1 billing day = {24 + Number(relaxHours)} hours
+                  </p>
+                )}
+              </div>
+              {relaxErr   && <ErrBanner msg={relaxErr} />}
+              {relaxSaved && <OkBanner msg="Relaxation hours saved." />}
+            </form>
+            <div className="px-6 pb-5">
+              <button type="submit" form="relax-form" disabled={relaxBusy}
+                className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-bold text-sm px-5 py-2.5 rounded-xl shadow-sm transition">
+                {relaxBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Save
+              </button>
             </div>
           </div>
 
