@@ -57,6 +57,11 @@ interface TruckKhataBill {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+function normMobile(m: string): string {
+  const digits = (m ?? "").replace(/\D/g, "");
+  return digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+}
+
 const fmt = (n: number) =>
   `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
@@ -462,7 +467,7 @@ export default function CheckOutPage() {
       return;
     }
     const nameMatch   = coDriverName.trim().toLowerCase() === session.checkin_driver_name?.trim().toLowerCase();
-    const mobileMatch = coDriverMobile.trim().replace(/\D/g, "") === session.checkin_driver_mobile?.trim().replace(/\D/g, "");
+    const mobileMatch = normMobile(coDriverMobile) === normMobile(session.checkin_driver_mobile ?? "");
     if (nameMatch && mobileMatch) {
       setDriverMatch("match");
     } else {
@@ -858,7 +863,11 @@ export default function CheckOutPage() {
                   </div>
                   <div>
                     <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">Mobile</p>
-                    <p className="text-sm font-semibold text-gray-700 font-mono">{session.checkin_driver_mobile || "—"}</p>
+                    <p className="text-sm font-semibold text-gray-700 font-mono">
+                      {session.checkin_driver_mobile
+                        ? `+91 ${normMobile(session.checkin_driver_mobile)}`
+                        : "—"}
+                    </p>
                   </div>
                   {session.checkin_driver_licence && (
                     <div>
@@ -906,7 +915,7 @@ export default function CheckOutPage() {
                 const mobileFilled = coDriverMobile.trim().length > 0 && coDriverMobile.trim() !== "+91";
                 if (!nameFilled && !mobileFilled) return null;
                 const nameMatch   = coDriverName.trim().toLowerCase() === session.checkin_driver_name?.trim().toLowerCase();
-                const mobileMatch = coDriverMobile.trim().replace(/\D/g, "") === session.checkin_driver_mobile?.trim().replace(/\D/g, "");
+                const mobileMatch = normMobile(coDriverMobile) === normMobile(session.checkin_driver_mobile ?? "");
                 const bothFilled  = nameFilled && mobileFilled;
                 if (bothFilled && nameMatch && mobileMatch) {
                   return (
