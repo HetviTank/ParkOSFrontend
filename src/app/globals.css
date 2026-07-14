@@ -76,3 +76,21 @@ body {
   100% { transform: translateX(100%); }
 }
 
+@keyframes floatSlow {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-10px); }
+}
+
+.animate-float-slow {
+  animation: floatSlow 5s ease-in-out infinite;
+}
+
+@keyframes gridPan {
+  from { background-position: 0 0; }
+  to   { background-position: 48px 48px; }
+}
+
+.animate-grid-pan {
+  animation: gridPan 12s linear infinite;
+}
+
