@@ -57,10 +57,10 @@ export default function LoginPage() {
 
 /* ──────────────────────────────── Hero panel ──────────────────────────────── */
 const HERO_STATS = [
-  { icon: Car, value: "1,250", label: "Vehicles Today", tint: "bg-emerald-50 text-emerald-600" },
-  { icon: Truck, value: "320", label: "Trucks Parked", tint: "bg-blue-50 text-blue-600" },
-  { icon: Gauge, value: "98%", label: "Slot Accuracy", tint: "bg-blue-50 text-blue-600" },
-  { icon: Zap, value: "Live", label: "Real-Time Monitor", tint: "bg-indigo-50 text-indigo-600" },
+  { icon: Car, value: "Real-Time", label: "Vehicle Tracking", tint: "bg-emerald-50 text-emerald-600" },
+  { icon: Truck, value: "Fleet Ready", label: "Trucks & Trailers", tint: "bg-blue-50 text-blue-600" },
+  { icon: Gauge, value: "Smart", label: "Slot Detection", tint: "bg-blue-50 text-blue-600" },
+  { icon: Zap, value: "Instant", label: "Live Alerts", tint: "bg-indigo-50 text-indigo-600" },
 ];
 
 function HeroPanel() {
@@ -115,10 +115,9 @@ function HeroPanel() {
 
 /* ──────────────────────────────── Hero visual (dashboard mockup) ──────────────────────────────── */
 function HeroVisual() {
-  const pct = 82;
   const r = 42;
   const circumference = 2 * Math.PI * r;
-  const dash = (circumference * pct) / 100;
+  const dash = circumference * 0.68;
 
   return (
     <div className="relative w-full h-full">
@@ -129,14 +128,14 @@ function HeroVisual() {
         style={{ animationDelay: "4s" }}
       />
 
-      {/* live occupancy card */}
+      {/* occupancy tracking card (illustrative UI preview, not live data) */}
       <div
         className="absolute right-8 top-2 w-52 bg-white rounded-3xl shadow-xl shadow-blue-900/10 border border-gray-100 p-5"
         style={{ transform: "rotate(-4deg)" }}
       >
         <div className="flex items-center gap-1.5 mb-4">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse-soft" />
-          <span className="text-xs font-semibold text-gray-500">Live Occupancy</span>
+          <span className="text-xs font-semibold text-gray-500">Occupancy Tracking</span>
         </div>
         <div className="relative w-28 h-28 mx-auto">
           <svg viewBox="0 0 100 100" className="w-28 h-28 -rotate-90">
@@ -159,23 +158,23 @@ function HeroVisual() {
             />
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className="text-2xl font-bold text-gray-900">{pct}%</span>
-            <span className="text-[10px] text-gray-400">Occupied</span>
+            <ParkingSquare className="w-6 h-6 text-blue-600 mb-1" />
+            <span className="text-[10px] text-gray-400">Per Zone</span>
           </div>
         </div>
         <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
           <div className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-blue-600" />
-            <span className="text-[11px] text-gray-500">780 Cars</span>
+            <span className="text-[11px] text-gray-500">Cars</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span className="text-[11px] text-gray-500">210 Trucks</span>
+            <span className="text-[11px] text-gray-500">Trucks</span>
           </div>
         </div>
       </div>
 
-      {/* zone map card */}
+      {/* zone map card (illustrative UI preview, not live data) */}
       <div
         className="absolute left-4 bottom-4 w-56 bg-white rounded-3xl shadow-xl shadow-blue-900/10 border border-gray-100 p-4"
         style={{ transform: "rotate(3deg)" }}
@@ -183,7 +182,7 @@ function HeroVisual() {
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-semibold text-gray-500">Zone Map</span>
           <span className="text-[10px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-            12 active
+            Multi-Zone
           </span>
         </div>
         <div className="relative h-28 rounded-2xl bg-slate-50 overflow-hidden">
