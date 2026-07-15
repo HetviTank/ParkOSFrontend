@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   ChevronRight, Settings, Save, AlertCircle, CheckCircle2,
   IndianRupee, CreditCard, Smartphone, Globe, Loader2,
-  Plus, Trash2, Timer,
+  Plus, Trash2, Timer, AlertTriangle,
 } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -76,6 +76,12 @@ export default function SettingsPage() {
   const [relaxErr,      setRelaxErr]      = useState("");
   const [sysPrefCache,  setSysPrefCache]  = useState<Record<string, unknown>>({});
 
+  // overdue threshold — stored in backend system-preferences
+  const [overdueAlertDays,    setOverdueAlertDays]    = useState("5");
+  const [overdueAlertBusy,    setOverdueAlertBusy]    = useState(false);
+  const [overdueAlertSaved,   setOverdueAlertSaved]   = useState(false);
+  const [overdueAlertErr,     setOverdueAlertErr]      = useState("");
+
   // overdue colour rules
   const [rules,       setRules]       = useState<OverdueRule[]>([]);
   const [rulesLoading, setRulesLoading] = useState(true);
@@ -100,9 +106,30 @@ export default function SettingsPage() {
       .then(p => {
         setSysPrefCache(p);
         setRelaxHours(String(p.relaxation_hours ?? 0));
+        setOverdueAlertDays(String(p.overdue_alert_days ?? 5));
       })
       .catch(() => {});
   }, []);
+
+  async function handleSaveOverdue(e: { preventDefault(): void }) {
+    e.preventDefault();
+    const d = parseInt(overdueAlertDays, 10);
+    if (isNaN(d) || d < 1) { setOverdueAlertErr("Must be 1 or more days."); return; }
+    setOverdueAlertBusy(true); setOverdueAlertErr(""); setOverdueAlertSaved(false);
+    try {
+      await apiFetch("/system-preferences", {
+        method: "PUT",
+        body: JSON.stringify({ ...sysPrefCache, overdue_alert_days: d }),
+      });
+      setSysPrefCache(p => ({ ...p, overdue_alert_days: d }));
+      setOverdueAlertSaved(true);
+      setTimeout(() => setOverdueAlertSaved(false), 2500);
+    } catch (err) {
+      setOverdueAlertErr(err instanceof Error ? err.message : "Failed.");
+    } finally {
+      setOverdueAlertBusy(false);
+    }
+  }
 
   async function handleSaveRelax(e: { preventDefault(): void }) {
     e.preventDefault();
@@ -473,6 +500,47 @@ export default function SettingsPage() {
               <button type="submit" form="relax-form" disabled={relaxBusy}
                 className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-bold text-sm px-5 py-2.5 rounded-xl shadow-sm transition">
                 {relaxBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Save
+              </button>
+            </div>
+          </div>
+
+          {/* overdue threshold */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-500" />
+                <p className="text-sm font-bold text-gray-800">Overdue threshold</p>
+              </div>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Trucks parked longer than this many days without checkout will be marked as overdue
+              </p>
+            </div>
+            <form id="overdue-form" onSubmit={handleSaveOverdue} className="px-6 py-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                  Mark as overdue after (days)
+                </label>
+                <input
+                  type="number" min={1} step={1}
+                  value={overdueAlertDays}
+                  onChange={e => { setOverdueAlertDays(e.target.value.replace(/\D/g, "")); setOverdueAlertErr(""); }}
+                  placeholder="5"
+                  className={inputCls}
+                />
+                {overdueAlertDays && Number(overdueAlertDays) > 0 && (
+                  <p className="text-xs text-red-500 mt-1.5">
+                    Trucks parked &gt; {overdueAlertDays} day{Number(overdueAlertDays) !== 1 ? "s" : ""} will be flagged as overdue
+                  </p>
+                )}
+              </div>
+              {overdueAlertErr   && <ErrBanner msg={overdueAlertErr} />}
+              {overdueAlertSaved && <OkBanner msg="Overdue threshold saved." />}
+            </form>
+            <div className="px-6 pb-5">
+              <button type="submit" form="overdue-form" disabled={overdueAlertBusy}
+                className="flex items-center gap-2 bg-red-500 hover:bg-red-600 disabled:bg-red-300 text-white font-bold text-sm px-5 py-2.5 rounded-xl shadow-sm transition">
+                {overdueAlertBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 Save
               </button>
             </div>

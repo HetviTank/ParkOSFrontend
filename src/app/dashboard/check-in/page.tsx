@@ -45,6 +45,7 @@ const fmt = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigi
 interface TruckItem  { id: string; truck_number: string; truck_type: string; owner_id: string | null; is_deleted?: boolean | null }
 interface OwnerItem  { id: string; name: string; primary_mobile: string; company: string | null; alternate_mobile: string | null }
 interface LocItem    { id: string; name: string; city: string | null }
+interface UserProfile { id: string; name: string; location_id: string | null; role: { id: string; name: string; editable: boolean } | null }
 interface DivItem    { id: string; name: string; truck_type: string; rate_per_day: number; gst_percent: number | null; status: string; total_slots?: number }
 interface SlotItem   { id: string; code: string; status: string }
 interface KhataItem  { id: string; owner_id: string; monthly_rate: number; billing_day: number; grace_days: number; is_active: boolean; is_deleted: boolean }
@@ -98,6 +99,9 @@ export default function CheckInPage() {
   const [idProofType,  setIdProofType]  = useState("aadhaar");
   const [remarks,      setRemarks]      = useState("");
 
+  // ── current user profile (drives location restriction)
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+
   // ── location / division / slot
   const [locations,    setLocations]    = useState<LocItem[]>([]);
   const [locationId,   setLocationId]   = useState("");
@@ -108,6 +112,9 @@ export default function CheckInPage() {
   const [slotId,       setSlotId]       = useState("");
   const [divLoading,   setDivLoading]   = useState(false);
   const [slotLoading,  setSlotLoading]  = useState(false);
+
+  // super admin and admin can choose any location; other roles are locked to their assigned one
+  const canSelectLocation = ["Super Admin", "Admin"].includes(userProfile?.role?.name ?? "");
 
   const selectedDiv = divisions.find((d) => d.id === divisionId) ?? null;
   const freeSlots   = slots.filter(s => s.status === "free");
@@ -191,14 +198,22 @@ export default function CheckInPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [khataId]);
 
-  // ── load locations on mount
+  // ── load profile + locations on mount
   useEffect(() => {
-    apiFetch<{ list: LocItem[] }>("/locations?limit=100")
-      .then((r) => {
-        setLocations(r.list);
-        if (r.list.length === 1) setLocationId(r.list[0].id);
-      })
-      .catch(() => {});
+    Promise.all([
+      apiFetch<UserProfile>("/admin-user"),
+      apiFetch<{ list: LocItem[] }>("/locations?limit=100"),
+    ]).then(([profile, locRes]) => {
+      setUserProfile(profile);
+      setLocations(locRes.list);
+      const isAdmin = ["Super Admin", "Admin"].includes(profile?.role?.name ?? "");
+      if (!isAdmin && profile.location_id) {
+        // lock to their assigned location
+        setLocationId(profile.location_id);
+      } else if (locRes.list.length === 1) {
+        setLocationId(locRes.list[0].id);
+      }
+    }).catch(() => {});
   }, []);
 
   // ── load divisions + occupancy when location changes
@@ -711,11 +726,23 @@ export default function CheckInPage() {
                 {/* Location */}
                 <div>
                   <label className={labelCls}>Location <Required /></label>
-                  <LocationDropdown
-                    locations={locations}
-                    locationId={locationId}
-                    onSelect={(id: string) => { setLocationId(id); setDivisionId(""); setSlots([]); setSlotId(""); }}
-                  />
+                  {canSelectLocation ? (
+                    <LocationDropdown
+                      locations={locations}
+                      locationId={locationId}
+                      onSelect={(id: string) => { setLocationId(id); setDivisionId(""); setSlots([]); setSlotId(""); }}
+                    />
+                  ) : (
+                    <div className="flex items-center gap-3 px-3.5 py-3 bg-gray-50 border border-gray-200 rounded-xl">
+                      <Lock className="w-4 h-4 text-gray-400 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-gray-800 truncate">
+                          {locations.find(l => l.id === locationId)?.name ?? (locationId ? "Loading…" : "No location assigned")}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-0.5">Assigned to your account · cannot be changed</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Division — custom searchable dropdown */}

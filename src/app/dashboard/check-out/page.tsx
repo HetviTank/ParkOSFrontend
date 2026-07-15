@@ -283,11 +283,30 @@ export default function CheckOutPage() {
       if (!t) { setSearchError(`Truck "${q}" not found in the system.`); return; }
       setTruck(t);
 
-      const sessRes = await apiFetch<{ list: SessionItem[] }>(
-        `/parking-sessions?truck_id=${t.id}&status=parked&limit=1`
-      );
+      // A truck still physically in the yard can be in either "parked" or
+      // "overdue" status (the dashboard's overdue-rules feature moves a session
+      // to "overdue" once it crosses a configured threshold) — both need to
+      // flow through the exact same normal checkout process below.
+      const [parkedRes, overdueRes] = await Promise.all([
+        apiFetch<{ list: SessionItem[] }>(`/parking-sessions?truck_id=${t.id}&status=parked&limit=1`),
+        apiFetch<{ list: SessionItem[] }>(`/parking-sessions?truck_id=${t.id}&status=overdue&limit=1`)
+          .catch(() => ({ list: [] as SessionItem[] })),
+      ]);
+      const sessRes = parkedRes.list.length ? parkedRes : overdueRes;
       if (!sessRes.list.length) {
-        setSearchError(`No active parking session found for truck "${q}".`);
+        // Diagnostic follow-up: check for ANY session on this truck (regardless of
+        // status) so the operator can see *why* the lookup came up empty —
+        // e.g. a stray status value, or a session that's already been released —
+        // instead of a dead-end message.
+        const anyRes = await apiFetch<{ list: SessionItem[] }>(
+          `/parking-sessions?truck_id=${t.id}&limit=1&sort_by=check_in_time&order=desc`
+        ).catch(() => ({ list: [] as SessionItem[] }));
+        const last = anyRes.list[0];
+        setSearchError(
+          last
+            ? `No active parking session found for truck "${q}". Its most recent session (checked in ${fmtDateTime(last.check_in_time)}) has status "${last.status}", not "parked" or "overdue".`
+            : `No active parking session found for truck "${q}". This truck has no parking history.`
+        );
         return;
       }
       const s = sessRes.list[0];

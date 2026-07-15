@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
+import { motion, AnimatePresence } from "motion/react";
 import {
   Car, LogOut, LogIn, ShieldCheck, Truck, Ban, BookOpen,
   Users, Bell, FileText, BarChart2, MapPin, Layers, Settings,
@@ -95,26 +96,24 @@ export default function Sidebar({
   const c = collapsed ?? false;
 
   return (
-    <aside className={`h-full flex flex-col bg-white border-r border-gray-100 shadow-[1px_0_12px_rgba(0,0,0,0.04)] transition-all duration-300 overflow-hidden ${
-      c ? "w-[68px]" : "w-64"
-    }`}>
+    <aside className="h-full w-full flex flex-col rounded-[30px] bg-white/70 backdrop-blur-xl border border-white/60 shadow-xl shadow-indigo-900/5 overflow-hidden dark:bg-slate-900/60 dark:border-slate-800/70">
 
       {/* ── Logo + hamburger ── */}
       <div className={`flex items-center justify-between px-4 pt-5 pb-4 ${c ? "flex-col gap-3" : ""}`}>
         {!c && (
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center shadow-md shadow-blue-200 shrink-0">
+            <div className="w-9 h-9 bg-gradient-to-br from-indigo-600 to-cyan-500 rounded-xl flex items-center justify-center shadow-md shadow-indigo-200 dark:shadow-indigo-900/40 shrink-0">
               <Car className="w-[18px] h-[18px] text-white" />
             </div>
             <div>
-              <p className="font-extrabold text-gray-900 text-[15px] leading-tight tracking-tight">ParkOS</p>
-              <p className="text-[11px] text-gray-400 leading-tight">Admin Panel</p>
+              <p className="font-extrabold text-gray-900 dark:text-white text-[15px] leading-tight tracking-tight">ParkOS</p>
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 leading-tight">Admin Panel</p>
             </div>
           </div>
         )}
 
         {c && (
-          <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center shadow-md shadow-blue-200">
+          <div className="w-9 h-9 bg-gradient-to-br from-indigo-600 to-cyan-500 rounded-xl flex items-center justify-center shadow-md shadow-indigo-200 dark:shadow-indigo-900/40">
             <Car className="w-[18px] h-[18px] text-white" />
           </div>
         )}
@@ -124,7 +123,7 @@ export default function Sidebar({
           <button
             onClick={onToggleCollapse}
             title={c ? "Expand sidebar" : "Collapse sidebar"}
-            className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition shrink-0"
+            className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition shrink-0 dark:text-slate-500 dark:hover:text-slate-200 dark:hover:bg-slate-800"
           >
             <Menu className="w-5 h-5" />
           </button>
@@ -134,7 +133,7 @@ export default function Sidebar({
         {onClose && (
           <button
             onClick={onClose}
-            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition md:hidden"
+            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition md:hidden dark:text-slate-500 dark:hover:text-slate-200 dark:hover:bg-slate-800"
           >
             <X className="w-4 h-4" />
           </button>
@@ -144,13 +143,13 @@ export default function Sidebar({
       {/* ── Location chip ── */}
       {!c && (
         <div className="px-4 pb-4">
-          <div className="flex items-center gap-2 bg-blue-50 rounded-xl px-3 py-2.5 border border-blue-100">
-            <div className="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
-              <MapPin className="w-3 h-3 text-blue-500" />
+          <div className="flex items-center gap-2 bg-indigo-50 rounded-xl px-3 py-2.5 border border-indigo-100 dark:bg-indigo-500/10 dark:border-indigo-500/20">
+            <div className="w-5 h-5 rounded-full bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center shrink-0">
+              <MapPin className="w-3 h-3 text-indigo-500 dark:text-indigo-300" />
             </div>
             <div className="min-w-0">
-              <p className="text-[11px] text-blue-400 font-medium leading-none mb-0.5">Location</p>
-              <p className="text-xs font-semibold text-blue-700 truncate">North Gate</p>
+              <p className="text-[11px] text-indigo-400 dark:text-indigo-300/70 font-medium leading-none mb-0.5">Location</p>
+              <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300 truncate">North Gate</p>
             </div>
           </div>
         </div>
@@ -158,8 +157,8 @@ export default function Sidebar({
 
       {c && (
         <div className="px-3 pb-3">
-          <div className="flex items-center justify-center bg-blue-50 rounded-xl p-2 border border-blue-100" title="North Gate">
-            <MapPin className="w-4 h-4 text-blue-500" />
+          <div className="flex items-center justify-center bg-indigo-50 rounded-xl p-2 border border-indigo-100 dark:bg-indigo-500/10 dark:border-indigo-500/20" title="North Gate">
+            <MapPin className="w-4 h-4 text-indigo-500 dark:text-indigo-300" />
           </div>
         </div>
       )}
@@ -170,11 +169,11 @@ export default function Sidebar({
           <div key={group.section}>
             {/* Section header — hidden when collapsed */}
             {!c && (
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.14em] px-2.5 mb-2">
+              <p className="text-[10px] font-bold text-gray-400 dark:text-slate-600 uppercase tracking-[0.14em] px-2.5 mb-2">
                 {group.section}
               </p>
             )}
-            {c && <div className="border-t border-gray-100 mb-2 mt-1" />}
+            {c && <div className="border-t border-gray-100 dark:border-slate-800 mb-2 mt-1" />}
 
             <ul className="space-y-1">
               {group.items.map((item) => {
@@ -193,44 +192,53 @@ export default function Sidebar({
                         c ? "justify-center px-0 py-3" : "px-3 py-2.5"
                       } ${
                         active
-                          ? "bg-blue-600 text-white shadow-sm shadow-blue-200"
-                          : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                          ? "bg-gradient-to-r from-indigo-600 to-cyan-500 text-white shadow-[0_0_20px_-4px_rgba(79,70,229,0.65)]"
+                          : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
                       }`}
                     >
                       <item.icon
-                        className={`shrink-0 ${c ? "w-5 h-5" : "w-[18px] h-[18px]"} ${
-                          active ? "text-white" : "text-gray-400 group-hover:text-gray-600"
+                        className={`shrink-0 transition-transform duration-200 group-hover:scale-110 group-hover:rotate-6 ${c ? "w-5 h-5" : "w-[18px] h-[18px]"} ${
+                          active ? "text-white" : "text-gray-400 group-hover:text-gray-600 dark:text-slate-500 dark:group-hover:text-slate-300"
                         }`}
                       />
 
-                      {!c && (
-                        <>
-                          <span className="flex-1 truncate">{item.label}</span>
+                      <AnimatePresence initial={false}>
+                        {!c && (
+                          <motion.span
+                            key="label-group"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.15 }}
+                            className="flex-1 min-w-0 flex items-center gap-2"
+                          >
+                            <span className="flex-1 truncate">{item.label}</span>
 
-                          {!!item.badge && item.badge > 0 && (
-                            <span className={`text-[11px] font-bold min-w-[20px] h-5 flex items-center justify-center rounded-full px-1.5 ${
-                              active
-                                ? "bg-white/25 text-white"
-                                : item.badgeColor === "red"
-                                ? "bg-red-100 text-red-600"
-                                : "bg-blue-100 text-blue-600"
-                            }`}>
-                              {item.badge}
-                            </span>
-                          )}
+                            {!!item.badge && item.badge > 0 && (
+                              <span className={`text-[11px] font-bold min-w-[20px] h-5 flex items-center justify-center rounded-full px-1.5 ${
+                                active
+                                  ? "bg-white/25 text-white"
+                                  : item.badgeColor === "red"
+                                  ? "bg-red-100 text-red-600 dark:bg-red-500/15 dark:text-red-300"
+                                  : "bg-indigo-100 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-300"
+                              }`}>
+                                {item.badge}
+                              </span>
+                            )}
 
-                          {item.children && (
-                            <ChevronRight className={`w-3.5 h-3.5 shrink-0 transition-transform ${
-                              parentHL ? "rotate-90" : ""
-                            } ${active ? "text-white/50" : "text-gray-300"}`} />
-                          )}
-                        </>
-                      )}
+                            {item.children && (
+                              <ChevronRight className={`w-3.5 h-3.5 shrink-0 transition-transform ${
+                                parentHL ? "rotate-90" : ""
+                              } ${active ? "text-white/50" : "text-gray-300 dark:text-slate-600"}`} />
+                            )}
+                          </motion.span>
+                        )}
+                      </AnimatePresence>
                     </Link>
 
                     {/* Sub-items — only when expanded */}
                     {!c && item.children && (
-                      <ul className="mt-0.5 ml-3.5 pl-3.5 border-l-2 border-gray-100 space-y-0.5 py-0.5">
+                      <ul className="mt-0.5 ml-3.5 pl-3.5 border-l-2 border-gray-100 dark:border-slate-800 space-y-0.5 py-0.5">
                         {item.children.map((child) => {
                           const childActive = pathname === child.href;
                           return (
@@ -239,12 +247,12 @@ export default function Sidebar({
                                 href={child.href}
                                 className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-all duration-150 ${
                                   childActive
-                                    ? "bg-blue-50 text-blue-700 font-semibold"
-                                    : "text-gray-500 hover:text-gray-800 hover:bg-gray-50 font-medium"
+                                    ? "bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-500/10 dark:text-indigo-300"
+                                    : "text-gray-500 hover:text-gray-800 hover:bg-gray-50 font-medium dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800"
                                 }`}
                               >
                                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 transition-colors ${
-                                  childActive ? "bg-blue-500" : "bg-gray-300"
+                                  childActive ? "bg-indigo-500 dark:bg-indigo-400" : "bg-gray-300 dark:bg-slate-600"
                                 }`} />
                                 {child.label}
                               </Link>
@@ -261,47 +269,47 @@ export default function Sidebar({
         ))}
       </nav>
 
-      {/* ── User footer ── */}
-      <div className="border-t border-gray-100 p-3">
+      {/* ── User footer (floating profile card) ── */}
+      <div className="p-3">
         {user ? (
           c ? (
             /* Collapsed: just avatar with logout on hover */
-            <div className="flex flex-col items-center gap-1">
+            <div className="flex flex-col items-center gap-1.5 rounded-2xl bg-white/70 dark:bg-slate-800/60 border border-white/60 dark:border-slate-700/60 shadow-sm py-2.5">
               <div
                 title={`${user.name} — ${user.role.name}`}
-                className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center font-bold text-sm shadow-sm shadow-blue-200 cursor-default"
+                className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-600 to-cyan-500 text-white flex items-center justify-center font-bold text-sm shadow-sm shadow-indigo-200 dark:shadow-indigo-900/40 cursor-default"
               >
                 {user.name.charAt(0).toUpperCase()}
               </div>
               <button
                 onClick={handleLogout}
                 title="Logout"
-                className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:text-slate-500 dark:hover:text-red-400 dark:hover:bg-red-500/10 rounded-lg transition"
               >
                 <LogOut className="w-4 h-4" />
               </button>
             </div>
           ) : (
-            /* Expanded: full user row */
-            <div className="flex items-center gap-2.5 px-2.5 py-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 transition group">
-              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-sm shadow-blue-200">
+            /* Expanded: floating profile card */
+            <div className="flex items-center gap-2.5 px-2.5 py-2.5 rounded-2xl bg-white/70 hover:bg-white/90 dark:bg-slate-800/60 dark:hover:bg-slate-800/90 border border-white/60 dark:border-slate-700/60 shadow-sm transition group">
+              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-600 to-cyan-500 text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-sm shadow-indigo-200 dark:shadow-indigo-900/40">
                 {user.name.charAt(0).toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-gray-900 truncate leading-tight">{user.name}</p>
-                <p className="text-[11px] text-gray-400 truncate leading-tight mt-0.5">{user.role.name}</p>
+                <p className="text-sm font-semibold text-gray-900 dark:text-white truncate leading-tight">{user.name}</p>
+                <p className="text-[11px] text-gray-400 dark:text-slate-500 truncate leading-tight mt-0.5">{user.role.name}</p>
               </div>
               <button
                 onClick={handleLogout}
                 title="Logout"
-                className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition opacity-0 group-hover:opacity-100"
+                className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:text-slate-500 dark:hover:text-red-400 dark:hover:bg-red-500/10 rounded-lg transition opacity-0 group-hover:opacity-100"
               >
                 <LogOut className="w-4 h-4" />
               </button>
             </div>
           )
         ) : (
-          <div className="h-14 rounded-xl bg-gray-50 animate-pulse" />
+          <div className="h-14 rounded-2xl bg-white/50 dark:bg-slate-800/40 animate-pulse" />
         )}
       </div>
     </aside>
