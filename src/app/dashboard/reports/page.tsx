@@ -8,6 +8,9 @@ import {
   Truck, Clock, Activity, AlertTriangle, TrendingUp, MapPin,
 } from "lucide-react";
 
+import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
+import { LocationSelect } from "@/components/ui/LocationSelect";
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
 function getToken() {
@@ -18,6 +21,10 @@ async function apiFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: { token },
   });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error("Your session has expired. Redirecting to login…");
+  }
   if (!res.ok) {
     const e = await res.json().catch(() => ({ detail: "Request failed" }));
     throw new Error((e as { detail?: string }).detail ?? "Request failed");
@@ -129,7 +136,10 @@ const selectCls = "appearance-none bg-white border border-gray-200 rounded-xl px
 export default function ReportsPage() {
   const router     = useRouter();
   const months     = useMemo(() => monthOptions(), []);
-  const [locId,    setLocId]    = useState("");
+
+  // Non-admin roles are locked to their assigned location — no "All locations" escape hatch.
+  const { isAdmin, locationId: locId, setLocationId: setLocId } = useLocationFilter();
+
   const [monthIdx, setMonthIdx] = useState(0);  // 0 = current month
   const [locs,     setLocs]     = useState<Location[]>([]);
   const [dash,     setDash]     = useState<DashResp | null>(null);
@@ -263,12 +273,15 @@ export default function ReportsPage() {
 
         {/* filters */}
         <div className="no-print flex flex-col sm:flex-row gap-3">
-          <div className="relative flex-1">
-            <select value={locId} onChange={e => setLocId(e.target.value)} className={selectCls}>
-              <option value="">All locations</option>
-              {locs.map(l => <option key={l.id} value={l.id}>{l.name}{l.city ? ` — ${l.city}` : ""}</option>)}
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+          <div className="flex-1">
+            <LocationSelect
+              value={locId}
+              onChange={setLocId}
+              locations={locs}
+              allowAll={isAdmin}
+              locked={!isAdmin}
+              className="w-full"
+            />
           </div>
           <div className="relative flex-1">
             <select value={monthIdx} onChange={e => setMonthIdx(Number(e.target.value))} className={selectCls}>

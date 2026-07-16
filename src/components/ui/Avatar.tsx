@@ -12,9 +12,9 @@ function gradientFor(name: string) {
   return GRADIENTS[hash % GRADIENTS.length];
 }
 
-export function Avatar({ name, size = "sm" }: { name: string; size?: "sm" | "md" }) {
+export function Avatar({ name, size = "sm" }: { name: string; size?: "sm" | "md" | "lg" }) {
   const initial = name.trim().charAt(0).toUpperCase() || "?";
-  const box = size === "sm" ? "w-7 h-7 text-xs" : "w-9 h-9 text-sm";
+  const box = size === "sm" ? "w-7 h-7 text-xs" : size === "md" ? "w-9 h-9 text-sm" : "w-12 h-12 text-lg";
 
   return (
     <div

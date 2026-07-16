@@ -16,6 +16,7 @@ export interface LoginResponse {
   id: string;
   name: string;
   email: string;
+  location_id: string | null;
   token_expire_time: string | null;
   token: string;
   refresh_token: string;

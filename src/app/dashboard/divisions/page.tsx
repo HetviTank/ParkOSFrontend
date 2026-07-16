@@ -7,6 +7,9 @@ import {
   CheckCircle2, Layers, Save, Truck, Zap, Percent, IndianRupee, Timer,
 } from "lucide-react";
 
+import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
+import { LocationSelect } from "@/components/ui/LocationSelect";
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
 function getToken() {
@@ -18,6 +21,10 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", token, ...(opts?.headers ?? {}) },
     ...opts,
   });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error("Your session has expired. Redirecting to login…");
+  }
   if (!res.ok) {
     const e = await res.json().catch(() => ({ detail: "Request failed" }));
     throw new Error((e as { detail?: string }).detail ?? "Request failed");
@@ -83,8 +90,10 @@ const inputCls = (ring: string) =>
 
 // ── page ──────────────────────────────────────────────────────────────────────
 export default function DivisionsPage() {
+  // Non-admin roles are locked to their assigned location — no "All locations" escape hatch.
+  const { isAdmin, locationId: selLoc, setLocationId: setSelLoc } = useLocationFilter();
+
   const [locations, setLocations] = useState<LocationRef[]>([]);
-  const [selLoc,    setSelLoc]    = useState<string>("");
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [occMap,    setOccMap]    = useState<Record<string, DivOcc>>({});
   const [loading,   setLoading]   = useState(false);
@@ -134,9 +143,11 @@ export default function DivisionsPage() {
       .then(r => {
         const list = r.list ?? [];
         setLocations(list);
-        if (list.length > 0) setSelLoc(list[0].id);
+        // Admins default to the first location; non-admins are already locked
+        // to their own assigned location (set from localStorage on mount).
+        if (isAdmin && list.length > 0) setSelLoc(prev => prev || list[0].id);
       }).catch(() => {});
-  }, []);
+  }, [isAdmin, setSelLoc]);
 
   const loadDivisions = useCallback(async (locId_: string) => {
     if (!locId_) return;
@@ -335,15 +346,14 @@ export default function DivisionsPage() {
           {/* location selector */}
           <div>
             <p className="text-xs font-semibold text-gray-500 mb-1.5 sm:text-right">Viewing location</p>
-            <div className="relative">
-              <select value={selLoc} onChange={e => setSelLoc(e.target.value)}
-                className="appearance-none bg-white border border-gray-200 rounded-2xl pl-4 pr-10 py-2.5 text-sm font-bold text-gray-900 shadow-sm hover:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition min-w-[220px] cursor-pointer">
-                {locations.map(l => (
-                  <option key={l.id} value={l.id}>{l.name}{l.city ? ` — ${l.city}` : ""}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-            </div>
+            <LocationSelect
+              value={selLoc}
+              onChange={setSelLoc}
+              locations={locations}
+              allowAll={false}
+              locked={!isAdmin}
+              className="min-w-[220px]"
+            />
           </div>
         </div>
       </div>

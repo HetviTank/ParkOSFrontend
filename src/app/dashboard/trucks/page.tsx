@@ -1,17 +1,31 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
+import { motion, AnimatePresence } from "motion/react";
 import {
-  ChevronRight, ChevronLeft, ChevronRight as ChevronNextIcon,
-  Search, RefreshCw, X, Loader2, AlertCircle,
-  Car, User, MapPin, Clock, LogOut, Receipt,
-  ShieldX, Download, ArrowUpDown, ChevronDown,
-  Pencil, Trash2, CheckCircle2, Eye,
+  ChevronRight, ChevronLeft, Search, RefreshCw, X, Loader2, AlertCircle,
+  Truck as TruckIcon, User, MapPin, Clock, LogOut, LogIn, Receipt,
+  ShieldX, Download, ChevronDown, ChevronUp, Pencil, Trash2, CheckCircle2, Eye,
+  MoreVertical, ShieldCheck, ShieldAlert, IndianRupee, FileText,
+  ArrowRightLeft, Phone, Building2, TrendingUp, TrendingDown, PackageSearch,
+  SlidersHorizontal, RotateCcw, StickyNote, Plus, History, Layers, Wallet, Timer,
+  CalendarClock, Hash, ExternalLink,
 } from "lucide-react";
+import { GlassCard } from "@/components/ui/GlassCard";
+import { Avatar } from "@/components/ui/Avatar";
+import { Overlay } from "@/components/ui/Overlay";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { Sparkline } from "@/components/ui/Sparkline";
+import { dashboardApi } from "@/lib/api";
+
+import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
+import { LocationSelect } from "@/components/ui/LocationSelect";
+import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 const PAGE_SIZE = 10;
+const DATE_FILTER_CAP = 500;
 
 function getToken() {
   return typeof window !== "undefined" ? localStorage.getItem("token") ?? "" : "";
@@ -22,6 +36,10 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", token, ...(opts?.headers ?? {}) },
     ...opts,
   });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error("Your session has expired. Redirecting to login…");
+  }
   if (!res.ok) {
     const e = await res.json().catch(() => ({ detail: "Request failed" }));
     throw new Error((e as { detail?: string }).detail ?? "Request failed");
@@ -46,27 +64,22 @@ interface Session {
   override_by: string | null;
 }
 interface TruckData    { id: string; truck_number: string; truck_type: string }
-interface OwnerData    { id: string; name: string; mobile: string }
+interface OwnerData    { id: string; name: string; company: string | null; primary_mobile: string; mobile?: string }
 interface LocData      { id: string; name: string; city: string | null }
 interface DivData      { id: string; name: string }
-interface SlotData     { id: string; code: string }
+interface SlotData     { id: string; code: string; status?: string }
 interface OverdueRule  { id: string; days: number; color: string; label: string | null }
+interface UserData     { id: string; name?: string; full_name?: string; username?: string; email?: string }
 interface Enriched extends Session {
   truckNumber: string; truckType: string;
-  ownerName: string; ownerMobile: string;
+  ownerName: string; ownerMobile: string; ownerCompany: string | null;
   locationName: string; divisionName: string; slotCode: string;
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-function daysSince(iso: string): number {
-  return Math.max(1, Math.ceil((Date.now() - new Date(iso).getTime()) / 86_400_000));
-}
-
+// ── formatters ────────────────────────────────────────────────────────────────
 function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString("en-IN", {
-    day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
-  });
+  return new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
@@ -76,60 +89,237 @@ function fmtTime(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 }
+function fmtDuration(startIso: string, endIso: string | null): string {
+  const end = endIso ? new Date(endIso).getTime() : Date.now();
+  const totalMin = Math.max(0, Math.floor((end - new Date(startIso).getTime()) / 60_000));
+  const days = Math.floor(totalMin / 1440);
+  const hours = Math.floor((totalMin % 1440) / 60);
+  const mins = totalMin % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
+function fmtINR(n: number): string {
+  return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+}
 
-// Returns the colour for the rule with the highest `days` threshold the session has exceeded.
-// Rules must be sorted ascending by `days`.
-function resolveOverdueColor(checkInTime: string, rules: OverdueRule[]): string | null {
+// ── status / priority derivation ───────────────────────────────────────────────
+type StatusKey = "parked" | "overdue" | "checkedout" | "forced" | "verification";
+type Priority = "green" | "orange" | "red";
+
+function daysSince(iso: string): number {
+  return Math.max(1, Math.ceil((Date.now() - new Date(iso).getTime()) / 86_400_000));
+}
+
+function topMatchedRule(checkInTime: string, rules: OverdueRule[]): OverdueRule | null {
   if (!rules.length) return null;
   const elapsed = Math.floor((Date.now() - new Date(checkInTime).getTime()) / 86_400_000);
   let matched: OverdueRule | null = null;
-  for (const r of rules) {
-    if (elapsed >= r.days) matched = r;
+  for (const r of rules) if (elapsed >= r.days) matched = r;
+  return matched;
+}
+
+function deriveStatusKey(s: Session): StatusKey {
+  if (s.status !== "released" && s.driver_match === "mismatch") return "verification";
+  if (s.status === "released") return s.driver_match === "override" ? "forced" : "checkedout";
+  if (s.status === "overdue") return "overdue";
+  return "parked";
+}
+
+function priorityFor(key: StatusKey, s: Session, rules: OverdueRule[]): Priority {
+  if (key === "verification") return "red";
+  if (key === "overdue") {
+    const maxDays = rules.length ? Math.max(...rules.map(r => r.days)) : 0;
+    const rule = topMatchedRule(s.check_in_time, rules);
+    return rule && maxDays > 0 && rule.days === maxDays ? "red" : "orange";
   }
-  return matched ? matched.color : null;
+  return "green";
 }
 
-function statusConfig(s: Session) {
-  const days = daysSince(s.check_in_time);
-  if (s.status === "released") return {
-    badgeBg: "bg-teal-700", rowBorder: "border-l-4 border-teal-400",
-    rowBg: "bg-teal-50/30",
-    badgeLabel: "Checked out", badgeCls: "bg-teal-50 text-teal-700 border-teal-200",
-    action: "receipt" as const,
-  };
-  if (s.status === "overdue") return {
-    badgeBg: "bg-red-600", rowBorder: "border-l-4 border-red-400",
-    rowBg: "bg-red-50/40",
-    badgeLabel: `Overdue · ${days}d`, badgeCls: "bg-red-50 text-red-700 border-red-200",
-    action: "forceout" as const,
-  };
-  if (s.entry_type?.toLowerCase() === "khata") return {
-    badgeBg: "bg-violet-700", rowBorder: "border-l-4 border-violet-400",
-    rowBg: "bg-violet-50/20",
-    badgeLabel: "Parked", badgeCls: "bg-violet-50 text-violet-700 border-violet-200",
-    action: "checkout" as const,
-  };
-  return {
-    badgeBg: "bg-blue-700", rowBorder: "border-l-4 border-blue-400",
-    rowBg: "",
-    badgeLabel: "Parked", badgeCls: "bg-blue-50 text-blue-700 border-blue-200",
-    action: "checkout" as const,
-  };
+const PRIORITY_BAR: Record<Priority, string> = {
+  green: "bg-emerald-400 dark:bg-emerald-500",
+  orange: "bg-amber-400 dark:bg-amber-500",
+  red: "bg-red-500",
+};
+
+const STATUS_META: Record<StatusKey, {
+  label: string; dot: string; chip: string;
+}> = {
+  parked:       { label: "Parked",         dot: "bg-emerald-500", chip: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/20" },
+  overdue:      { label: "Overdue",        dot: "bg-amber-500",   chip: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/20" },
+  checkedout:   { label: "Checked out",    dot: "bg-sky-500",     chip: "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-300 dark:border-sky-500/20" },
+  forced:       { label: "Force Checkout", dot: "bg-violet-500",  chip: "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-300 dark:border-violet-500/20" },
+  verification: { label: "Verification Pending", dot: "bg-rose-500", chip: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-500/10 dark:text-rose-300 dark:border-rose-500/20" },
+};
+
+function statusLabel(key: StatusKey, s: Session): string {
+  if (key === "overdue") return `Overdue · ${daysSince(s.check_in_time)}d`;
+  return STATUS_META[key].label;
 }
 
-// ── column config ─────────────────────────────────────────────────────────────
-const COL_DEFS = [
-  { label: "Truck",          sortKey: null,             minW: 120 },
-  { label: "Owner / Driver", sortKey: null,             minW: 140 },
-  { label: "Location",       sortKey: null,             minW: 130 },
-  { label: "Check-in",       sortKey: "check_in_time",  minW: 120 },
-  { label: "Check-out / Driver",  sortKey: null,        minW: 140 },
-  { label: "Type / Status",  sortKey: null,             minW: 110 },
-  { label: "Action",         sortKey: null,             minW: 180 },
+// Filter dropdown options — reuse the same dot colors as STATUS_META / the row
+// KHATA badge so the filter chips read consistently with the rest of the page.
+const STATUS_FILTER_OPTIONS = [
+  { value: "parked", label: STATUS_META.parked.label, dot: STATUS_META.parked.dot },
+  { value: "overdue", label: STATUS_META.overdue.label, dot: STATUS_META.overdue.dot },
+  { value: "released", label: STATUS_META.checkedout.label, dot: STATUS_META.checkedout.dot },
 ];
-const INIT_WIDTHS = [160, 200, 190, 160, 160, 140, 210];
+const TYPE_FILTER_OPTIONS = [
+  { value: "regular", label: "Regular", dot: "bg-gray-400 dark:bg-slate-500" },
+  { value: "khata", label: "KHATA", dot: "bg-violet-500" },
+];
 
-// ── component ─────────────────────────────────────────────────────────────────
+// ── full-payload PUT builder ───────────────────────────────────────────────────
+// The backend's PUT /parking-sessions/{id} is a full replace, not a partial patch —
+// every field on ParkingSessionUpdate is required, so we always send the session's
+// existing values and only override what's actually changing.
+function buildUpdatePayload(s: Enriched, overrides: Record<string, unknown>) {
+  return {
+    truck_id: s.truck_id,
+    owner_id: s.owner_id,
+    location_id: s.location_id,
+    division_id: s.division_id,
+    slot_id: s.slot_id,
+    entry_type: s.entry_type,
+    checkin_driver_name: s.checkin_driver_name,
+    checkin_driver_mobile: s.checkin_driver_mobile,
+    checkin_driver_licence: s.checkin_driver_licence,
+    checkin_id_proof_type: s.checkin_id_proof_type,
+    check_in_time: s.check_in_time,
+    checkin_remarks: s.checkin_remarks,
+    checkout_driver_name: s.checkout_driver_name,
+    checkout_driver_mobile: s.checkout_driver_mobile,
+    driver_match: s.driver_match,
+    override_by: s.override_by,
+    check_out_time: s.check_out_time,
+    checkout_remarks: s.checkout_remarks,
+    rate_per_day: s.rate_per_day,
+    gst_percent: s.gst_percent,
+    days: s.days,
+    subtotal: s.subtotal,
+    gst_amount: s.gst_amount,
+    total_amount: s.total_amount,
+    status: s.status,
+    ...overrides,
+  };
+}
+
+// ── KPI card ──────────────────────────────────────────────────────────────────
+function useCountUp(target: number, duration = 800) {
+  const [val, setVal] = useState(0);
+  const fromRef = useRef(0);
+  useEffect(() => {
+    const from = fromRef.current;
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setVal(from + (target - from) * eased);
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else fromRef.current = target;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration]);
+  return val;
+}
+function AnimatedNumber({ value, format }: { value: number; format: (n: number) => string }) {
+  const v = useCountUp(value);
+  return <>{format(v)}</>;
+}
+
+function OccupancyRing({ percent, color }: { percent: number; color: string }) {
+  const r = 15;
+  const c = 2 * Math.PI * r;
+  const dash = (c * Math.min(Math.max(percent, 0), 100)) / 100;
+  return (
+    <svg width={36} height={36} viewBox="0 0 36 36" className="-rotate-90 shrink-0">
+      <circle cx="18" cy="18" r={r} fill="none" strokeWidth={4} className="stroke-gray-100 dark:stroke-slate-800" />
+      <circle cx="18" cy="18" r={r} fill="none" strokeWidth={4} strokeLinecap="round" stroke={color} strokeDasharray={`${dash} ${c - dash}`} />
+    </svg>
+  );
+}
+
+type KPITrend = { kind: "sparkline"; data: number[]; color: string } | { kind: "ring"; percent: number; color: string };
+
+function KPICard({
+  label, value, sub, subColor = "text-gray-400 dark:text-slate-500", subIcon,
+  icon, iconBg, delay = 0, trend,
+}: {
+  label: string; value: React.ReactNode; sub?: string; subColor?: string; subIcon?: "up" | "down";
+  icon: React.ReactNode; iconBg: string; delay?: number; trend?: KPITrend;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay, ease: "easeOut" }}
+      whileHover={{ scale: 1.02 }}
+      className="rounded-3xl transition-shadow duration-300 hover:shadow-xl"
+    >
+      <GlassCard gradientBorder className="p-4 group h-full">
+        <div className="flex items-start justify-between mb-2.5">
+          <p className="text-xs font-medium text-gray-500 dark:text-slate-400 leading-tight">{label}</p>
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${iconBg} transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6`}>
+            {icon}
+          </div>
+        </div>
+        <div className="flex items-end justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight tabular-nums truncate">{value}</p>
+            {sub && (
+              <div className={`flex items-center gap-1 mt-1.5 text-xs font-medium ${subColor}`}>
+                {subIcon === "up" && <TrendingUp className="w-3 h-3 shrink-0" />}
+                {subIcon === "down" && <TrendingDown className="w-3 h-3 shrink-0" />}
+                <span className="truncate">{sub}</span>
+              </div>
+            )}
+          </div>
+          {trend && (
+            <div className="hidden sm:block shrink-0">
+              {trend.kind === "sparkline" && <Sparkline data={trend.data} stroke={trend.color} width={60} height={28} />}
+              {trend.kind === "ring" && <OccupancyRing percent={trend.percent} color={trend.color} />}
+            </div>
+          )}
+        </div>
+      </GlassCard>
+    </motion.div>
+  );
+}
+
+// ── small building blocks ──────────────────────────────────────────────────────
+
+function ReceiptRow({ label, value }: { label: string; value: string | number | null | undefined }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-xs text-gray-400 dark:text-slate-500 shrink-0">{label}</span>
+      <span className="text-xs font-semibold text-gray-700 dark:text-slate-200 text-right">{value ?? "—"}</span>
+    </div>
+  );
+}
+function PagBtn({ disabled, onClick, children }: { disabled: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button disabled={disabled} onClick={onClick}
+      className="p-2 rounded-lg text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-white dark:hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none transition border border-transparent hover:border-gray-200 dark:hover:border-slate-700">
+      {children}
+    </button>
+  );
+}
+function DetailField({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1">{label}</p>
+      <p className={`text-sm text-gray-800 dark:text-slate-200 font-medium ${mono ? "font-mono" : ""}`}>{value || "—"}</p>
+    </div>
+  );
+}
+const GRID_COLS = "28px minmax(150px,1.1fr) minmax(190px,1.5fr) minmax(150px,1.1fr) minmax(150px,1.1fr) minmax(150px,1fr) minmax(200px,1.2fr)";
+
+// ── column config for header labels ────────────────────────────────────────────
+const COL_LABELS = ["", "Truck", "Owner / Driver", "Location", "Check-in / Check-out", "Status", "Actions"];
+
+// ── main page ─────────────────────────────────────────────────────────────────
 export default function AllTrucksPage() {
   const [sessions,  setSessions]  = useState<Enriched[]>([]);
   const [total,     setTotal]     = useState(0);
@@ -137,36 +327,32 @@ export default function AllTrucksPage() {
   const [loading,   setLoading]   = useState(false);
   const [listError, setListError] = useState("");
 
+  // Non-admin roles are locked to their assigned location — no "All locations" escape hatch.
+  const { isAdmin, locationId: locationFilter, setLocationId: setLocationFilter } = useLocationFilter();
+
   const [searchInput,    setSearchInput]    = useState("");
-  const [locationFilter, setLocationFilter] = useState("");
   const [statusFilter,   setStatusFilter]   = useState("");
   const [typeFilter,     setTypeFilter]     = useState("");
-  const [sortBy,         setSortBy]         = useState("check_in_time");
-  const [sortOrder,      setSortOrder]      = useState<"asc"|"desc">("desc");
+  const [sortOrder,      setSortOrder]      = useState<"asc" | "desc">("desc");
 
   const [truckIdFilter, setTruckIdFilter]   = useState("");
-  const [truckSearch,   setTruckSearch]     = useState(""); // resolved truck_id or "__none__"
+  const [truckSearch,   setTruckSearch]     = useState("");
   const [searchLoading, setSearchLoading]   = useState(false);
+
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo,   setDateTo]   = useState("");
 
   const [locations,     setLocations]     = useState<LocData[]>([]);
   const [overdueRules,  setOverdueRules]  = useState<OverdueRule[]>([]);
   const [receiptSession, setReceiptSession] = useState<Enriched | null>(null);
+  const [detailSession,  setDetailSession]  = useState<Enriched | null>(null);
+  const [detailApprover, setDetailApprover] = useState<UserData | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [menuId, setMenuId] = useState<string | null>(null);
 
-  // ── resizable columns ──
-  const [colWidths, setColWidths] = useState<number[]>(INIT_WIDTHS);
-  function startResize(idx: number, startX: number) {
-    const startW = colWidths[idx];
-    function onMove(e: MouseEvent) {
-      const newW = Math.max(COL_DEFS[idx].minW, startW + e.clientX - startX);
-      setColWidths(prev => prev.map((w, i) => i === idx ? newW : w));
-    }
-    function onUp() {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }
+  const [kpiCounts, setKpiCounts] = useState({ total: 0, parked: 0, overdue: 0, released: 0 });
+  const [revenue, setRevenue] = useState<{ today: number; growthPercent: number; weekly: number[] } | null>(null);
 
   // ── edit ──
   const [editSession,    setEditSession]    = useState<Enriched | null>(null);
@@ -178,8 +364,17 @@ export default function AllTrucksPage() {
   const [editErr,        setEditErr]        = useState("");
   const [editOk,         setEditOk]         = useState(false);
 
+  // ── move slot ──
+  const [moveSession, setMoveSession] = useState<Enriched | null>(null);
+  const [moveSlots,   setMoveSlots]   = useState<SlotData[]>([]);
+  const [moveSlotId,  setMoveSlotId]  = useState("");
+  const [moveLoading, setMoveLoading] = useState(false);
+  const [moveBusy,    setMoveBusy]    = useState(false);
+  const [moveErr,     setMoveErr]     = useState("");
+  const [moveOk,      setMoveOk]      = useState(false);
+
   // ── delete ──
-  const [deleteId,   setDeleteId]   = useState<string | null>(null);
+  const [deleteSession, setDeleteSession] = useState<Enriched | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
   // ── enrichment cache (survives page changes) ──
@@ -191,7 +386,7 @@ export default function AllTrucksPage() {
 
   useEffect(() => {
     apiFetch<{ list: LocData[] }>("/locations?limit=100&start=0").then(r => setLocations(r.list ?? [])).catch(() => {});
-    apiFetch<{ list: OverdueRule[] }>("/overdue-alert-rules").then(r => setOverdueRules(r.list ?? [])).catch(() => {});
+    apiFetch<{ list: OverdueRule[] }>("/overdue-alert-rules").then(r => setOverdueRules((r.list ?? []).sort((a, b) => a.days - b.days))).catch(() => {});
   }, []);
 
   // Debounce truck number search → resolve to truck_id
@@ -204,7 +399,6 @@ export default function AllTrucksPage() {
         if (res.list?.length) {
           setTruckIdFilter(res.list[0].id);
           setTruckSearch(res.list[0].id);
-          // seed cache
           res.list.forEach(t => { tCache.current[t.id] = t; });
         } else {
           setTruckIdFilter("__none__");
@@ -216,69 +410,128 @@ export default function AllTrucksPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
+  const enrich = useCallback(async (list: Session[]): Promise<Enriched[]> => {
+    const truckIds = [...new Set(list.map(s => s.truck_id))].filter(id => !tCache.current[id]);
+    const ownerIds = [...new Set(list.map(s => s.owner_id))].filter(id => !oCache.current[id]);
+    const locIds   = [...new Set(list.map(s => s.location_id))].filter(id => !lCache.current[id]);
+    const divIds   = [...new Set(list.map(s => s.division_id))].filter(id => !dCache.current[id]);
+    const slotIds  = [...new Set(list.map(s => s.slot_id).filter(Boolean) as string[])].filter(id => !sCache.current[id]);
+
+    await Promise.allSettled([
+      ...truckIds.map(id => apiFetch<TruckData>(`/trucks/${id}`).then(t => { tCache.current[id] = t; }).catch(() => {})),
+      ...ownerIds.map(id => apiFetch<OwnerData>(`/owners/${id}`).then(o => { oCache.current[id] = o; }).catch(() => {})),
+      ...locIds.map(id => apiFetch<LocData>(`/locations/${id}`).then(l => { lCache.current[id] = l; }).catch(() => {})),
+      ...divIds.map(id => apiFetch<DivData>(`/divisions/${id}`).then(d => { dCache.current[id] = d; }).catch(() => {})),
+      ...slotIds.map(id => apiFetch<SlotData>(`/slots/${id}`).then(s => { sCache.current[id] = s; }).catch(() => {})),
+    ]);
+
+    return list.map(s => ({
+      ...s,
+      truckNumber:  tCache.current[s.truck_id]?.truck_number ?? s.truck_id.slice(0, 8).toUpperCase(),
+      truckType:    tCache.current[s.truck_id]?.truck_type   ?? "—",
+      ownerName:    oCache.current[s.owner_id]?.name         ?? "—",
+      ownerMobile:  oCache.current[s.owner_id]?.primary_mobile ?? oCache.current[s.owner_id]?.mobile ?? "",
+      ownerCompany: oCache.current[s.owner_id]?.company      ?? null,
+      locationName: lCache.current[s.location_id]?.name      ?? "—",
+      divisionName: dCache.current[s.division_id]?.name      ?? "—",
+      slotCode:     s.slot_id ? (sCache.current[s.slot_id]?.code ?? "—") : "—",
+    }));
+  }, []);
+
   const fetchSessions = useCallback(async (
-    p: number, tid: string, locId: string, status: string, type: string, sb: string, ord: string,
+    p: number, tid: string, locId: string, status: string, type: string, ord: string,
+    from: string, to: string,
   ) => {
     if (tid === "__none__") { setSessions([]); setTotal(0); return; }
     setLoading(true); setListError("");
     try {
-      const start = (p - 1) * PAGE_SIZE;
-      let url = `/parking-sessions?start=${start}&limit=${PAGE_SIZE}&sort_by=${sb}&order=${ord}`;
+      const dateFiltering = !!(from || to);
+      const start = dateFiltering ? 0 : (p - 1) * PAGE_SIZE;
+      const limit = dateFiltering ? DATE_FILTER_CAP : PAGE_SIZE;
+      let url = `/parking-sessions?start=${start}&limit=${limit}&sort_by=check_in_time&order=${ord}`;
       if (tid)    url += `&truck_id=${tid}`;
       if (locId)  url += `&location_id=${locId}`;
       if (status) url += `&status=${status}`;
       if (type)   url += `&entry_type=${type}`;
       const data = await apiFetch<{ count: number; list: Session[] }>(url);
-      const list = data.list ?? [];
+      let list = data.list ?? [];
+      let count = data.count ?? 0;
 
-      // enrich using cache + parallel fetch for missing IDs
-      const truckIds = [...new Set(list.map(s => s.truck_id))].filter(id => !tCache.current[id]);
-      const ownerIds = [...new Set(list.map(s => s.owner_id))].filter(id => !oCache.current[id]);
-      const locIds   = [...new Set(list.map(s => s.location_id))].filter(id => !lCache.current[id]);
-      const divIds   = [...new Set(list.map(s => s.division_id))].filter(id => !dCache.current[id]);
-      const slotIds  = [...new Set(list.map(s => s.slot_id).filter(Boolean) as string[])].filter(id => !sCache.current[id]);
+      if (dateFiltering) {
+        const fromMs = from ? new Date(`${from}T00:00:00`).getTime() : -Infinity;
+        const toMs   = to   ? new Date(`${to}T23:59:59`).getTime()   : Infinity;
+        list = list.filter(s => {
+          const t = new Date(s.check_in_time).getTime();
+          return t >= fromMs && t <= toMs;
+        });
+        count = list.length;
+        list = list.slice((p - 1) * PAGE_SIZE, (p - 1) * PAGE_SIZE + PAGE_SIZE);
+      }
 
-      await Promise.allSettled([
-        ...truckIds.map(id => apiFetch<TruckData>(`/trucks/${id}`).then(t => { tCache.current[id] = t; }).catch(() => {})),
-        ...ownerIds.map(id => apiFetch<OwnerData>(`/owners/${id}`).then(o => { oCache.current[id] = o; }).catch(() => {})),
-        ...locIds.map(id => apiFetch<LocData>(`/locations/${id}`).then(l => { lCache.current[id] = l; }).catch(() => {})),
-        ...divIds.map(id => apiFetch<DivData>(`/divisions/${id}`).then(d => { dCache.current[id] = d; }).catch(() => {})),
-        ...slotIds.map(id => apiFetch<SlotData>(`/slots/${id}`).then(s => { sCache.current[id] = s; }).catch(() => {})),
-      ]);
-
-      const enriched: Enriched[] = list.map(s => ({
-        ...s,
-        truckNumber:  tCache.current[s.truck_id]?.truck_number ?? s.truck_id.slice(0, 8).toUpperCase(),
-        truckType:    tCache.current[s.truck_id]?.truck_type   ?? "—",
-        ownerName:    oCache.current[s.owner_id]?.name         ?? "—",
-        ownerMobile:  oCache.current[s.owner_id]?.mobile       ?? "",
-        locationName: lCache.current[s.location_id]?.name      ?? "—",
-        divisionName: dCache.current[s.division_id]?.name      ?? "—",
-        slotCode:     s.slot_id ? (sCache.current[s.slot_id]?.code ?? "—") : "—",
-      }));
-
+      const enriched = await enrich(list);
       setSessions(enriched);
-      setTotal(data.count ?? 0);
+      setTotal(count);
     } catch (err) {
       setListError(err instanceof Error ? err.message : "Failed to load sessions.");
     } finally { setLoading(false); }
-  }, []);
+  }, [enrich]);
 
   useEffect(() => {
-    fetchSessions(page, truckIdFilter, locationFilter, statusFilter, typeFilter, sortBy, sortOrder);
-  }, [page, truckIdFilter, locationFilter, statusFilter, typeFilter, sortBy, sortOrder, fetchSessions]);
+    fetchSessions(page, truckIdFilter, locationFilter, statusFilter, typeFilter, sortOrder, dateFrom, dateTo);
+  }, [page, truckIdFilter, locationFilter, statusFilter, typeFilter, sortOrder, dateFrom, dateTo, fetchSessions]);
 
-  function handleSort(field: string) {
-    if (sortBy === field) setSortOrder(o => o === "asc" ? "desc" : "asc");
-    else { setSortBy(field); setSortOrder("desc"); }
-    setPage(1);
-  }
+  // ── KPI counts (independent of pagination; respects location/type/truck filters, not status) ──
+  const fetchKpis = useCallback(async () => {
+    if (truckIdFilter === "__none__") { setKpiCounts({ total: 0, parked: 0, overdue: 0, released: 0 }); return; }
+    const base = (status: string) => {
+      let url = `/parking-sessions?start=0&limit=1`;
+      if (status) url += `&status=${status}`;
+      if (truckIdFilter)  url += `&truck_id=${truckIdFilter}`;
+      if (locationFilter) url += `&location_id=${locationFilter}`;
+      if (typeFilter)     url += `&entry_type=${typeFilter}`;
+      return apiFetch<{ count: number }>(url).then(r => r.count ?? 0).catch(() => 0);
+    };
+    const [t, p, o, r] = await Promise.all([base(""), base("parked"), base("overdue"), base("released")]);
+    setKpiCounts({ total: t, parked: p, overdue: o, released: r });
+  }, [truckIdFilter, locationFilter, typeFilter]);
+
+  useEffect(() => { fetchKpis(); }, [fetchKpis]);
+
+  // ── revenue KPI (reuses the dashboard aggregate endpoint) ──
+  const fetchRevenue = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
+    try {
+      const data = await dashboardApi.get(token, locationFilter || undefined);
+      setRevenue({
+        today: data.kpis.today_revenue,
+        growthPercent: data.kpis.revenue_growth_percent,
+        weekly: data.weekly_revenue.map(w => w.total),
+      });
+    } catch { /* non-critical — card just shows a dash */ }
+  }, [locationFilter]);
+
+  useEffect(() => { fetchRevenue(); }, [fetchRevenue]);
+
+  const refreshAll = useCallback(() => {
+    fetchSessions(page, truckIdFilter, locationFilter, statusFilter, typeFilter, sortOrder, dateFrom, dateTo);
+    fetchKpis();
+    fetchRevenue();
+  }, [fetchSessions, page, truckIdFilter, locationFilter, statusFilter, typeFilter, sortOrder, dateFrom, dateTo, fetchKpis, fetchRevenue]);
 
   function clearFilters() {
     setSearchInput(""); setLocationFilter(""); setStatusFilter(""); setTypeFilter("");
-    setTruckIdFilter(""); setTruckSearch(""); setPage(1);
+    setTruckIdFilter(""); setTruckSearch(""); setDateFrom(""); setDateTo(""); setPage(1);
   }
 
+  const avgParkingTime = useMemo(() => {
+    const done = sessions.filter(s => s.check_out_time && s.days != null);
+    if (!done.length) return null;
+    const avgDays = done.reduce((sum, s) => sum + (s.days ?? 0), 0) / done.length;
+    return avgDays < 1 ? `${Math.round(avgDays * 24)}h` : `${avgDays.toFixed(1)}d`;
+  }, [sessions]);
+
+  // ── edit ──
   function openEdit(s: Enriched) {
     setEditSession(s);
     setEditDriver(s.checkin_driver_name ?? "");
@@ -286,21 +539,19 @@ export default function AllTrucksPage() {
     setEditLic(s.checkin_driver_licence ?? "");
     setEditRemarks(s.checkin_remarks ?? "");
     setEditErr(""); setEditOk(false);
+    setMenuId(null);
   }
-
   async function handleSaveEdit() {
     if (!editSession) return;
     setEditBusy(true); setEditErr(""); setEditOk(false);
     try {
-      await apiFetch(`/parking-sessions/${editSession.id}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          checkin_driver_name:    editDriver.trim(),
-          checkin_driver_mobile:  editMobile.trim(),
-          checkin_driver_licence: editLic.trim() || null,
-          checkin_remarks:        editRemarks.trim() || null,
-        }),
+      const payload = buildUpdatePayload(editSession, {
+        checkin_driver_name: editDriver.trim(),
+        checkin_driver_mobile: editMobile.trim(),
+        checkin_driver_licence: editLic.trim() || null,
+        checkin_remarks: editRemarks.trim() || null,
       });
+      await apiFetch(`/parking-sessions/${editSession.id}`, { method: "PUT", body: JSON.stringify(payload) });
       setEditOk(true);
       setSessions(prev => prev.map(s => s.id === editSession.id
         ? { ...s, checkin_driver_name: editDriver.trim(), checkin_driver_mobile: editMobile.trim(), checkin_driver_licence: editLic.trim() || null, checkin_remarks: editRemarks.trim() || null }
@@ -312,61 +563,101 @@ export default function AllTrucksPage() {
     } finally { setEditBusy(false); }
   }
 
+  // ── move slot ──
+  async function openMoveSlot(s: Enriched) {
+    setMoveSession(s); setMoveSlotId(""); setMoveErr(""); setMoveOk(false); setMoveSlots([]);
+    setMenuId(null);
+    setMoveLoading(true);
+    try {
+      const res = await apiFetch<{ list: SlotData[] }>(`/slots?division_id=${s.division_id}&status=free&limit=200`);
+      setMoveSlots(res.list ?? []);
+    } catch { setMoveSlots([]); }
+    finally { setMoveLoading(false); }
+  }
+  async function handleMoveSlot() {
+    if (!moveSession || !moveSlotId) return;
+    setMoveBusy(true); setMoveErr(""); setMoveOk(false);
+    try {
+      const payload = buildUpdatePayload(moveSession, { slot_id: moveSlotId });
+      await apiFetch(`/parking-sessions/${moveSession.id}`, { method: "PUT", body: JSON.stringify(payload) });
+      setMoveOk(true);
+      const newCode = moveSlots.find(sl => sl.id === moveSlotId)?.code ?? "—";
+      sCache.current[moveSlotId] = { id: moveSlotId, code: newCode };
+      setSessions(prev => prev.map(s => s.id === moveSession.id ? { ...s, slot_id: moveSlotId, slotCode: newCode } : s));
+      setTimeout(() => setMoveSession(null), 900);
+    } catch (err) {
+      setMoveErr(err instanceof Error ? err.message : "Failed to move slot.");
+    } finally { setMoveBusy(false); }
+  }
+
+  // ── delete ──
   async function handleDelete(id: string) {
     setDeleteBusy(true);
     try {
       await apiFetch(`/parking-sessions/${id}`, { method: "DELETE" });
       setSessions(prev => prev.filter(s => s.id !== id));
       setTotal(t => t - 1);
-      setDeleteId(null);
+      setDeleteSession(null);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Delete failed.");
     } finally { setDeleteBusy(false); }
+  }
+
+  // ── details drawer ──
+  function openDetails(s: Enriched) {
+    setDetailSession(s); setDetailApprover(null); setMenuId(null);
+    if (s.override_by) {
+      apiFetch<UserData>(`/users/${s.override_by}`).then(setDetailApprover).catch(() => {});
+    }
   }
 
   function exportCSV() {
     if (!sessions.length) return;
     const headers = ["Truck No","Type","Owner","Driver","Location","Division","Slot","Status","Entry Type","Check-in","Check-out","Days","Total (₹)"];
     const rows = sessions.map(s => {
-      const cfg = statusConfig(s);
+      const key = deriveStatusKey(s);
       return [
         s.truckNumber, s.truckType, s.ownerName, s.checkin_driver_name,
-        s.locationName, s.divisionName, s.slotCode, cfg.badgeLabel,
+        s.locationName, s.divisionName, s.slotCode, statusLabel(key, s),
         s.entry_type, fmtDateTime(s.check_in_time), fmtDateTime(s.check_out_time),
         s.days ?? "", s.total_amount ?? "",
       ];
     });
     const csv = [headers, ...rows].map(r => r.map(c => `"${c}"`).join(",")).join("\n");
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv]));
-    a.download = `parkos-trucks-${new Date().toISOString().slice(0,10)}.csv`; a.click();
+    a.download = `parkos-trucks-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const filtersActive = !!(searchInput || locationFilter || statusFilter || typeFilter);
-
-  const parkedCount   = sessions.filter(s => s.status === "parked").length;
-  const overdueCount  = sessions.filter(s => s.status === "overdue").length;
-  const releasedCount = sessions.filter(s => s.status === "released").length;
+  const filtersActive = !!(searchInput || (isAdmin && locationFilter) || statusFilter || typeFilter || dateFrom || dateTo);
+  const occPercent = kpiCounts.total ? (kpiCounts.parked / kpiCounts.total) * 100 : 0;
+  const overduePercent = kpiCounts.total ? (kpiCounts.overdue / kpiCounts.total) * 100 : 0;
+  const releasedPercent = kpiCounts.total ? (kpiCounts.released / kpiCounts.total) * 100 : 0;
 
   return (
-    <div className="px-4 sm:px-6 py-6 space-y-5">
+    <div className="px-4 sm:px-5 lg:px-6 py-5 space-y-5 w-full">
 
       {/* ── Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: "easeOut" }}
+        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+      >
         <div>
-          <div className="flex items-center gap-2 text-xs text-gray-400 mb-2">
-            <Link href="/dashboard" className="hover:text-blue-600 transition">Dashboard</Link>
+          <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-slate-500 mb-2">
+            <Link href="/dashboard" className="hover:text-indigo-600 dark:hover:text-indigo-400 transition">Dashboard</Link>
             <ChevronRight className="w-3 h-3" />
-            <span className="text-gray-700 font-semibold">All Trucks</span>
+            <span className="text-gray-700 dark:text-slate-300 font-semibold">All Trucks</span>
           </div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">All Trucks</h1>
-          <p className="text-sm text-gray-400 mt-1">Live parking sessions across all locations</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white tracking-tight">All Trucks</h1>
+          <p className="text-sm text-gray-400 dark:text-slate-500 mt-1">Monitor all active and completed parking sessions.</p>
         </div>
         <div className="flex items-center gap-2 self-start sm:self-center">
           <button
-            onClick={() => fetchSessions(page, truckIdFilter, locationFilter, statusFilter, typeFilter, sortBy, sortOrder)}
+            onClick={refreshAll}
             disabled={loading}
-            className="flex items-center gap-2 bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300 px-4 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm"
+            className="flex items-center gap-2 bg-white/70 dark:bg-slate-800/60 border border-white/60 dark:border-slate-700/60 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             <span className="hidden sm:inline">Refresh</span>
@@ -374,186 +665,254 @@ export default function AllTrucksPage() {
           <button
             onClick={exportCSV}
             disabled={!sessions.length}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm shadow-blue-200 disabled:opacity-40"
+            className="flex items-center gap-2 bg-white/70 dark:bg-slate-800/60 border border-white/60 dark:border-slate-700/60 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm disabled:opacity-40"
           >
             <Download className="w-4 h-4" />
             <span className="hidden sm:inline">Export CSV</span>
           </button>
+          <Link
+            href="/dashboard/check-in"
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm shadow-indigo-200 dark:shadow-none"
+          >
+            <Plus className="w-4 h-4" />
+            <span className="hidden sm:inline">Add Truck</span>
+          </Link>
         </div>
+      </motion.div>
+
+      {/* ── KPI cards ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3.5">
+        <KPICard
+          delay={0}
+          label="Total Trucks"
+          value={<AnimatedNumber value={kpiCounts.total} format={n => Math.round(n).toString()} />}
+          sub="all sessions"
+          icon={<Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-300" />}
+          iconBg="bg-indigo-100 dark:bg-indigo-500/15"
+        />
+        <KPICard
+          delay={0.06}
+          label="Currently Parked"
+          value={<AnimatedNumber value={kpiCounts.parked} format={n => Math.round(n).toString()} />}
+          sub={`${occPercent.toFixed(0)}% of fleet`}
+          icon={<TruckIcon className="w-4 h-4 text-emerald-600 dark:text-emerald-300" />}
+          iconBg="bg-emerald-100 dark:bg-emerald-500/15"
+          trend={{ kind: "ring", percent: occPercent, color: "#10B981" }}
+        />
+        <KPICard
+          delay={0.12}
+          label="Overdue"
+          value={<AnimatedNumber value={kpiCounts.overdue} format={n => Math.round(n).toString()} />}
+          sub={kpiCounts.overdue > 0 ? "needs action" : "all clear"}
+          subColor={kpiCounts.overdue > 0 ? "text-red-500" : "text-emerald-500"}
+          icon={<AlertCircle className="w-4 h-4 text-red-500" />}
+          iconBg="bg-red-100 dark:bg-red-500/15"
+          trend={{ kind: "ring", percent: overduePercent, color: "#EF4444" }}
+        />
+        <KPICard
+          delay={0.18}
+          label="Checked Out"
+          value={<AnimatedNumber value={kpiCounts.released} format={n => Math.round(n).toString()} />}
+          sub={`${releasedPercent.toFixed(0)}% of fleet`}
+          icon={<CheckCircle2 className="w-4 h-4 text-sky-600 dark:text-sky-300" />}
+          iconBg="bg-sky-100 dark:bg-sky-500/15"
+          trend={{ kind: "ring", percent: releasedPercent, color: "#0EA5E9" }}
+        />
+        <KPICard
+          delay={0.24}
+          label="Revenue Today"
+          value={revenue ? <AnimatedNumber value={revenue.today} format={fmtINR} /> : "—"}
+          sub={revenue ? `${revenue.growthPercent >= 0 ? "+" : ""}${revenue.growthPercent.toFixed(1)}% vs yesterday` : undefined}
+          subColor={revenue && revenue.growthPercent > 0 ? "text-emerald-600" : revenue && revenue.growthPercent < 0 ? "text-red-500" : undefined}
+          subIcon={revenue ? (revenue.growthPercent > 0 ? "up" : revenue.growthPercent < 0 ? "down" : undefined) : undefined}
+          icon={<Wallet className="w-4 h-4 text-cyan-600 dark:text-cyan-300" />}
+          iconBg="bg-cyan-100 dark:bg-cyan-500/15"
+          trend={revenue ? { kind: "sparkline", data: revenue.weekly, color: "#06B6D4" } : undefined}
+        />
+        <KPICard
+          delay={0.3}
+          label="Avg Parking Time"
+          value={avgParkingTime ?? "—"}
+          sub="checked-out · current view"
+          icon={<Timer className="w-4 h-4 text-amber-600 dark:text-amber-300" />}
+          iconBg="bg-amber-100 dark:bg-amber-500/15"
+        />
       </div>
 
-      {/* ── Stats strip ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {([
-          { label: "Total Sessions", value: total,         icon: "bg-slate-100",   num: "text-slate-700",   bar: "bg-slate-400",   iconC: "text-slate-500"   },
-          { label: "Parked",         value: parkedCount,   icon: "bg-emerald-50",  num: "text-emerald-600", bar: "bg-emerald-400", iconC: "text-emerald-400" },
-          { label: "Overdue",        value: overdueCount,  icon: "bg-red-50",      num: "text-red-500",     bar: "bg-red-400",     iconC: "text-red-400"     },
-          { label: "Checked Out",    value: releasedCount, icon: "bg-sky-50",      num: "text-sky-600",     bar: "bg-sky-400",     iconC: "text-sky-400"     },
-        ] as const).map(st => (
-          <div key={st.label} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex items-center gap-4">
-            <div className={`w-11 h-11 rounded-xl ${st.icon} flex items-center justify-center shrink-0`}>
-              <Car className={`w-5 h-5 ${st.iconC}`} />
-            </div>
-            <div className="min-w-0">
-              <p className={`text-2xl font-extrabold leading-none ${st.num}`}>{st.value}</p>
-              <p className="text-xs text-gray-400 mt-1.5 font-medium truncate">{st.label}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Table card (filters + headers + rows) ── */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
-
-        {/* Filter bar — inside the card */}
-        <div className="px-4 py-3.5 border-b border-gray-100 flex flex-wrap gap-3 items-center">
-          {/* Search */}
-          <div className="relative flex-1 min-w-52">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+      {/* ── Toolbar ── */}
+      <GlassCard className="p-3.5">
+        <div className="flex flex-wrap gap-3 items-center">
+          <div className="relative w-full sm:flex-1 sm:min-w-52">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
             {searchLoading
               ? <Loader2 className="absolute right-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 animate-spin" />
-              : searchInput && <button onClick={() => setSearchInput("")} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 transition"><X className="w-3.5 h-3.5" /></button>}
+              : searchInput && <button onClick={() => setSearchInput("")} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 transition"><X className="w-3.5 h-3.5" /></button>}
             <input
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
-              placeholder="Search by truck number…"
-              className="w-full pl-10 pr-10 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-400 focus:bg-white transition"
+              placeholder="Search truck number…"
+              className="w-full pl-10 pr-10 py-2 text-sm bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-xl placeholder-gray-400 dark:placeholder-slate-500 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400 focus:bg-white dark:focus:bg-slate-800 transition"
             />
           </div>
 
-          <div className="h-6 w-px bg-gray-100 hidden sm:block" />
+          <div className="h-6 w-px bg-gray-100 dark:bg-slate-700 hidden sm:block" />
 
-          {/* Location */}
-          <div className="relative">
-            <select value={locationFilter} onChange={e => { setLocationFilter(e.target.value); setPage(1); }} className={selectCls}>
-              <option value="">All locations</option>
-              {locations.map(l => <option key={l.id} value={l.id}>{l.name}{l.city ? ` — ${l.city}` : ""}</option>)}
-            </select>
-            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
-          </div>
+          <LocationSelect
+            className="w-full sm:w-auto"
+            value={locationFilter}
+            onChange={(v) => { setLocationFilter(v); setPage(1); }}
+            locations={locations}
+            allowAll={isAdmin}
+            locked={!isAdmin}
+          />
 
-          {/* Status */}
-          <div className="relative">
-            <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }} className={selectCls}>
-              <option value="">All statuses</option>
-              <option value="parked">Parked</option>
-              <option value="overdue">Overdue</option>
-              <option value="released">Checked out</option>
-            </select>
-            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
-          </div>
+          <EnumFilterSelect
+            className="w-full sm:w-auto"
+            value={statusFilter}
+            onChange={(v) => { setStatusFilter(v); setPage(1); }}
+            options={STATUS_FILTER_OPTIONS}
+            allLabel="All statuses"
+          />
 
-          {/* Type */}
-          <div className="relative">
-            <select value={typeFilter} onChange={e => { setTypeFilter(e.target.value); setPage(1); }} className={selectCls}>
-              <option value="">All types</option>
-              <option value="regular">Regular</option>
-              <option value="khata">KHATA</option>
-            </select>
-            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
-          </div>
+          <EnumFilterSelect
+            className="w-full sm:w-auto"
+            value={typeFilter}
+            onChange={(v) => { setTypeFilter(v); setPage(1); }}
+            options={TYPE_FILTER_OPTIONS}
+            allLabel="All types"
+          />
 
-          {filtersActive && (
-            <button onClick={clearFilters} className="text-xs font-semibold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 px-3 py-2 rounded-lg flex items-center gap-1 transition">
-              <X className="w-3.5 h-3.5" />Clear
+          <div className="flex items-center gap-2 w-full sm:w-auto sm:contents">
+            <button
+              onClick={() => setShowAdvanced(v => !v)}
+              className={`flex-1 sm:flex-none flex items-center justify-center sm:justify-start gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl transition ${showAdvanced ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300" : "bg-gray-50 dark:bg-slate-800/60 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800"}`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />Advanced
             </button>
-          )}
+
+            {filtersActive && (
+              <button onClick={clearFilters} className="flex-1 sm:flex-none text-xs font-semibold text-red-500 hover:text-red-700 bg-red-50 dark:bg-red-500/10 dark:hover:bg-red-500/20 hover:bg-red-100 px-3 py-2 rounded-xl flex items-center justify-center sm:justify-start gap-1.5 transition">
+                <RotateCcw className="w-3.5 h-3.5" />Reset
+              </button>
+            )}
+
+            <div className="flex-1 hidden lg:block" />
+
+            <button onClick={exportCSV} disabled={!sessions.length}
+              className="flex-1 sm:flex-none flex items-center justify-center sm:justify-start gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl bg-gray-50 dark:bg-slate-800/60 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition disabled:opacity-40">
+              <Download className="w-3.5 h-3.5" />Export
+            </button>
+          </div>
         </div>
 
-        {/* ── Scrollable table area ── */}
-        <div className="overflow-x-auto border-b border-gray-100"
-          style={{ scrollbarWidth: "thin", scrollbarColor: "#e5e7eb transparent" }}>
-          <div style={{ minWidth: colWidths.reduce((a, b) => a + b, 0) + "px" }}>
-
-        {/* Column headers — resizable */}
-        <div className="hidden md:grid bg-gray-50 border-b border-gray-100 select-none"
-          style={{ gridTemplateColumns: colWidths.map(w => `${w}px`).join(" ") }}>
-          {COL_DEFS.map((col, idx) => (
-            <div key={col.label} className="relative flex items-center px-4 py-3 group">
-              {col.sortKey ? (
-                <button onClick={() => handleSort(col.sortKey!)}
-                  className="flex items-center gap-1.5 text-[11px] font-bold text-gray-400 uppercase tracking-widest hover:text-gray-700 transition">
-                  <Clock className="w-3 h-3" />{col.label}
-                  <ArrowUpDown className={`w-2.5 h-2.5 ${sortBy === col.sortKey ? "text-blue-500" : "text-gray-300"}`} />
-                </button>
-              ) : (
-                <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">
-                  {col.label}
-                </span>
-              )}
-              {/* Drag handle — not on last column */}
-              {idx < COL_DEFS.length - 1 && (
-                <div
-                  className="absolute right-0 top-[20%] h-[60%] w-[3px] rounded-full bg-gray-200 opacity-0 group-hover:opacity-100 hover:!opacity-100 hover:bg-blue-400 transition-all cursor-col-resize"
-                  onMouseDown={e => { e.preventDefault(); startResize(idx, e.clientX); }}
-                />
-              )}
-            </div>
-          ))}
-        </div>
-
-        {listError && (
-          <div className="flex items-center gap-2.5 px-5 py-4 bg-red-50 border-b border-red-100">
-            <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-            <p className="text-sm text-red-700">{listError}</p>
-          </div>
-        )}
-
-        {truckSearch === "__none__" && (
-          <div className="px-5 py-10 text-center">
-            <Car className="w-10 h-10 text-gray-200 mx-auto mb-2" />
-            <p className="text-sm font-medium text-gray-500">No truck found matching &ldquo;{searchInput}&rdquo;</p>
-            <p className="text-xs text-gray-400 mt-1">Check the registration number and try again</p>
-          </div>
-        )}
-
-        {loading ? (
-          Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="px-5 py-4 border-b border-gray-50 flex items-center gap-4">
-              <div className="w-28 h-8 bg-gray-100 rounded-lg animate-pulse shrink-0" />
-              <div className="flex-1 space-y-2">
-                <div className="h-3.5 bg-gray-100 rounded-full animate-pulse w-40" />
-                <div className="h-3 bg-gray-100 rounded-full animate-pulse w-56" />
+        <AnimatePresence>
+          {showAdvanced && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden"
+            >
+              <div className="pt-3 mt-3 border-t border-gray-100 dark:border-slate-800 flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 dark:text-slate-400">
+                  <CalendarClock className="w-3.5 h-3.5" />Check-in date range
+                </div>
+                <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }}
+                  className="px-3 py-1.5 text-sm bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-lg text-gray-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <span className="text-gray-300 dark:text-slate-600 text-sm">to</span>
+                <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }}
+                  className="px-3 py-1.5 text-sm bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-lg text-gray-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                {(dateFrom || dateTo) && (
+                  <span className="text-[11px] text-gray-400 dark:text-slate-500">
+                    scanning most recent {DATE_FILTER_CAP} matching sessions
+                  </span>
+                )}
               </div>
-              <div className="w-20 h-6 bg-gray-100 rounded-full animate-pulse hidden sm:block" />
-              <div className="w-24 h-8 bg-gray-100 rounded-xl animate-pulse hidden md:block" />
-            </div>
-          ))
-        ) : truckSearch !== "__none__" && sessions.length === 0 && !loading ? (
-          <div className="px-5 py-16 text-center">
-            <div className="w-14 h-14 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
-              <Car className="w-7 h-7 text-gray-300" />
-            </div>
-            <p className="text-sm font-medium text-gray-500">No sessions found</p>
-            {filtersActive && <p className="text-xs text-gray-400 mt-1">Try clearing some filters</p>}
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-50">
-            {sessions.map(s => (
-              <TruckRow
-                key={s.id}
-                session={s}
-                colWidths={colWidths}
-                onReceipt={() => setReceiptSession(s)}
-                onEdit={() => openEdit(s)}
-                onDelete={() => setDeleteId(s.id)}
-                deleteId={deleteId}
-                deleteBusy={deleteBusy}
-                onDeleteConfirm={handleDelete}
-                onDeleteCancel={() => setDeleteId(null)}
-              />
-            ))}
-          </div>
-        )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </GlassCard>
 
-          </div>{/* end min-width wrapper */}
-        </div>{/* end overflow-x-auto */}
+      {/* ── Data grid ── */}
+      <GlassCard className="overflow-hidden">
+        <div className="md:overflow-x-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#e5e7eb transparent" }}>
+          <div className="md:min-w-[1060px]">
+
+            {/* sticky header — desktop grid only, mobile cards carry their own labels */}
+            <div className="hidden md:grid sticky top-0 z-10 bg-gray-50/90 dark:bg-slate-900/90 backdrop-blur-xl border-b border-gray-100 dark:border-slate-800"
+              style={{ gridTemplateColumns: GRID_COLS }}>
+              {COL_LABELS.map((label, i) => (
+                <div key={i} className="px-3 py-3 flex items-center">
+                  {label && i === 4 ? (
+                    <button
+                      onClick={() => setSortOrder(o => o === "asc" ? "desc" : "asc")}
+                      className="flex items-center gap-1 text-[11px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest hover:text-gray-700 dark:hover:text-slate-200 transition"
+                    >
+                      <Clock className="w-3 h-3" />{label}
+                      {sortOrder === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
+                  ) : label && (
+                    <span className="text-[11px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">
+                      {label}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {listError && (
+              <div className="flex items-center gap-2.5 px-5 py-4 bg-red-50 dark:bg-red-500/10 border-b border-red-100 dark:border-red-500/20">
+                <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                <p className="text-sm text-red-700 dark:text-red-300">{listError}</p>
+              </div>
+            )}
+
+            <div className="p-2.5 space-y-2">
+              {truckSearch === "__none__" ? (
+                <EmptyState
+                  icon={<PackageSearch className="w-8 h-8 text-gray-300 dark:text-slate-600" />}
+                  title={`No truck found matching "${searchInput}"`}
+                  sub="Check the registration number and try again"
+                />
+              ) : loading ? (
+                Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)
+              ) : sessions.length === 0 ? (
+                <EmptyState
+                  icon={<TruckIcon className="w-8 h-8 text-gray-300 dark:text-slate-600" />}
+                  title="No active trucks found."
+                  sub={filtersActive ? "Try clearing some filters" : "Check in a truck to get started"}
+                  cta={!filtersActive}
+                />
+              ) : (
+                sessions.map((s, i) => (
+                  <TruckRow
+                    key={s.id}
+                    session={s}
+                    index={i}
+                    rules={overdueRules}
+                    expanded={expandedId === s.id}
+                    onToggleExpand={() => setExpandedId(prev => prev === s.id ? null : s.id)}
+                    menuOpen={menuId === s.id}
+                    onToggleMenu={() => setMenuId(prev => prev === s.id ? null : s.id)}
+                    onCloseMenu={() => setMenuId(null)}
+                    onView={() => openDetails(s)}
+                    onEdit={() => openEdit(s)}
+                    onMoveSlot={() => openMoveSlot(s)}
+                    onReceipt={() => { setReceiptSession(s); setMenuId(null); }}
+                    onDelete={() => { setDeleteSession(s); setMenuId(null); }}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* Pagination */}
         {!loading && totalPages > 1 && (
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-4 border-t border-gray-100 bg-gray-50/40">
-            <p className="text-xs text-gray-400 order-2 sm:order-1">
-              {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of <span className="font-semibold text-gray-600">{total}</span>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-4 border-t border-gray-100 dark:border-slate-800 bg-gray-50/40 dark:bg-slate-800/20">
+            <p className="text-xs text-gray-400 dark:text-slate-500 order-2 sm:order-1">
+              {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of <span className="font-semibold text-gray-600 dark:text-slate-300">{total}</span>
             </p>
             <div className="flex items-center gap-1 order-1 sm:order-2">
               <PagBtn disabled={page <= 1} onClick={() => setPage(p => p - 1)}><ChevronLeft className="w-4 h-4" /></PagBtn>
@@ -561,399 +920,663 @@ export default function AllTrucksPage() {
                 const n = i + 1;
                 return (
                   <button key={n} onClick={() => setPage(n)}
-                    className={`w-8 h-8 rounded-lg text-sm font-medium transition ${page === n ? "bg-blue-600 text-white shadow-sm" : "text-gray-500 hover:bg-white hover:text-gray-900 border border-transparent hover:border-gray-200"}`}>
+                    className={`w-8 h-8 rounded-lg text-sm font-medium transition ${page === n ? "bg-indigo-600 text-white shadow-sm" : "text-gray-500 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white border border-transparent hover:border-gray-200 dark:hover:border-slate-700"}`}>
                     {n}
                   </button>
                 );
               })}
-              <PagBtn disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}><ChevronNextIcon className="w-4 h-4" /></PagBtn>
+              <PagBtn disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight className="w-4 h-4" /></PagBtn>
             </div>
           </div>
         )}
-      </div>
+      </GlassCard>
 
       {/* ── Edit drawer ── */}
-      {editSession && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/30 backdrop-blur-sm" onClick={() => setEditSession(null)} />
-          <div className="w-full max-w-md bg-white shadow-2xl flex flex-col h-full">
-            {/* header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center">
-                  <Pencil className="w-4 h-4 text-blue-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-gray-900">Edit Session</p>
-                  <p className="text-xs text-gray-400 font-mono">{editSession.truckNumber}</p>
-                </div>
-              </div>
-              <button onClick={() => setEditSession(null)} className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition">
-                <X className="w-4 h-4" />
-              </button>
+      <Overlay open={!!editSession} onClose={() => setEditSession(null)} variant="drawer" title="Edit Session" widthClass="max-w-md">
+        {editSession && (
+          <div className="space-y-4">
+            <p className="text-xs text-gray-400 dark:text-slate-500 font-mono -mt-2">{editSession.truckNumber}</p>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Driver Name</label>
+              <input value={editDriver} onChange={e => setEditDriver(e.target.value)}
+                className="mt-1.5 w-full px-3.5 py-2.5 text-sm border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-800/60 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-800 transition" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Driver Mobile</label>
+              <input value={editMobile} onChange={e => setEditMobile(e.target.value)}
+                className="mt-1.5 w-full px-3.5 py-2.5 text-sm border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-800/60 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-800 transition" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Driver Licence</label>
+              <input value={editLic} onChange={e => setEditLic(e.target.value)} placeholder="Optional"
+                className="mt-1.5 w-full px-3.5 py-2.5 text-sm border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-800/60 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-800 transition" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Remarks</label>
+              <textarea value={editRemarks} onChange={e => setEditRemarks(e.target.value)} rows={3} placeholder="Optional"
+                className="mt-1.5 w-full px-3.5 py-2.5 text-sm border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-800/60 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-800 transition resize-none" />
             </div>
 
-            {/* body */}
-            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-              <div>
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Driver Name</label>
-                <input value={editDriver} onChange={e => setEditDriver(e.target.value)}
-                  className="mt-1.5 w-full px-3.5 py-2.5 text-sm border border-gray-200 rounded-xl bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition" />
+            {editErr && (
+              <div className="flex items-center gap-2 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/20 text-red-600 dark:text-red-300 text-xs px-3.5 py-2.5 rounded-xl">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />{editErr}
               </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Driver Mobile</label>
-                <input value={editMobile} onChange={e => setEditMobile(e.target.value)}
-                  className="mt-1.5 w-full px-3.5 py-2.5 text-sm border border-gray-200 rounded-xl bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition" />
+            )}
+            {editOk && (
+              <div className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs px-3.5 py-2.5 rounded-xl">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />Saved successfully!
               </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Driver Licence</label>
-                <input value={editLic} onChange={e => setEditLic(e.target.value)}
-                  placeholder="Optional"
-                  className="mt-1.5 w-full px-3.5 py-2.5 text-sm border border-gray-200 rounded-xl bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition" />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Remarks</label>
-                <textarea value={editRemarks} onChange={e => setEditRemarks(e.target.value)}
-                  rows={3} placeholder="Optional"
-                  className="mt-1.5 w-full px-3.5 py-2.5 text-sm border border-gray-200 rounded-xl bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition resize-none" />
-              </div>
+            )}
 
-              {editErr && (
-                <div className="flex items-center gap-2 bg-red-50 border border-red-100 text-red-600 text-xs px-3.5 py-2.5 rounded-xl">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />{editErr}
-                </div>
-              )}
-              {editOk && (
-                <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 text-emerald-700 text-xs px-3.5 py-2.5 rounded-xl">
-                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />Saved successfully!
-                </div>
-              )}
-            </div>
-
-            {/* footer */}
-            <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
+            <div className="flex gap-3 pt-1">
               <button onClick={() => setEditSession(null)}
-                className="flex-1 border border-gray-200 text-gray-600 hover:bg-gray-50 font-semibold py-2.5 rounded-xl transition text-sm">
+                className="flex-1 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 font-semibold py-2.5 rounded-xl transition text-sm">
                 Cancel
               </button>
               <button onClick={handleSaveEdit} disabled={editBusy}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-xl transition text-sm flex items-center justify-center gap-2 disabled:opacity-60">
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl transition text-sm flex items-center justify-center gap-2 disabled:opacity-60">
                 {editBusy ? <><Loader2 className="w-4 h-4 animate-spin" />Saving…</> : "Save changes"}
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Overlay>
 
-      {/* ── Receipt modal ── */}
-      {receiptSession && (
-        <div className="fixed inset-0 z-50 bg-black/25 backdrop-blur-sm flex items-end sm:items-center justify-center p-4" onClick={() => setReceiptSession(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 bg-teal-100 rounded-xl flex items-center justify-center">
-                  <Receipt className="w-4 h-4 text-teal-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-gray-900">Receipt</p>
-                  <p className="text-xs text-gray-400">{receiptSession.truckNumber}</p>
-                </div>
+      {/* ── Move slot modal ── */}
+      <Overlay open={!!moveSession} onClose={() => setMoveSession(null)} variant="modal" title="Move Slot" widthClass="max-w-sm">
+        {moveSession && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="font-mono font-bold text-gray-900 dark:text-white">{moveSession.truckNumber}</span>
+              <span className="text-gray-400 dark:text-slate-500">·</span>
+              <span className="text-gray-500 dark:text-slate-400">currently in <span className="font-semibold text-gray-700 dark:text-slate-200">{moveSession.slotCode}</span></span>
+            </div>
+
+            {moveLoading ? (
+              <div className="flex items-center justify-center py-8 gap-2 text-gray-400 dark:text-slate-500">
+                <Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm">Loading free slots…</span>
               </div>
-              <button onClick={() => setReceiptSession(null)} className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="px-5 py-5 space-y-3">
-              <ReceiptRow label="Owner"       value={receiptSession.ownerName} />
-              <ReceiptRow label="Driver"      value={receiptSession.checkin_driver_name} />
-              <ReceiptRow label="Location"    value={`${receiptSession.locationName} · ${receiptSession.divisionName} · ${receiptSession.slotCode}`} />
-              <ReceiptRow label="Entry type"  value={receiptSession.entry_type?.toUpperCase()} />
-              <ReceiptRow label="Check-in"    value={fmtDateTime(receiptSession.check_in_time)} />
-              <ReceiptRow label="Check-out"   value={fmtDateTime(receiptSession.check_out_time)} />
-              <div className="border-t border-gray-100 pt-3 space-y-2">
-                <ReceiptRow label={`${receiptSession.days ?? "—"} days × ₹${receiptSession.rate_per_day}/day`} value={`₹${receiptSession.subtotal?.toFixed(2) ?? "—"}`} />
-                <ReceiptRow label={`GST ${receiptSession.gst_percent}%`} value={`₹${receiptSession.gst_amount?.toFixed(2) ?? "—"}`} />
-                <div className="flex items-center justify-between pt-1">
-                  <span className="text-sm font-bold text-gray-700">Total</span>
-                  <span className="text-lg font-extrabold text-gray-900">₹{receiptSession.total_amount?.toFixed(2) ?? "—"}</span>
-                </div>
+            ) : moveSlots.length === 0 ? (
+              <div className="text-center py-6">
+                <ArrowRightLeft className="w-7 h-7 text-gray-200 dark:text-slate-700 mx-auto mb-2" />
+                <p className="text-sm text-gray-400 dark:text-slate-500">No free slots in {moveSession.divisionName} right now.</p>
               </div>
-            </div>
-            <div className="px-5 pb-5">
-              <button onClick={() => setReceiptSession(null)} className="w-full border border-gray-200 text-gray-600 hover:bg-gray-50 font-semibold py-2.5 rounded-xl transition text-sm">Close</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── TruckRow ──────────────────────────────────────────────────────────────────
-const AVATAR_COLORS = [
-  "from-blue-400 to-indigo-500", "from-violet-400 to-violet-600",
-  "from-teal-400 to-cyan-500",   "from-amber-400 to-orange-500",
-  "from-rose-400 to-pink-500",   "from-sky-400 to-blue-500",
-];
-function avatarGradient(name: string) {
-  return AVATAR_COLORS[(name.charCodeAt(0) ?? 0) % AVATAR_COLORS.length];
-}
-
-interface TruckRowProps {
-  session: Enriched;
-  colWidths: number[];
-  onReceipt: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  deleteId: string | null;
-  deleteBusy: boolean;
-  onDeleteConfirm: (id: string) => Promise<void>;
-  onDeleteCancel: () => void;
-}
-function TruckRow({ session: s, colWidths, onReceipt, onEdit, onDelete, deleteId, deleteBusy, onDeleteConfirm, onDeleteCancel }: TruckRowProps) {
-  const cfg = statusConfig(s);
-
-  return (
-    <>
-      {/* ── Desktop grid row ── */}
-      <div
-        className={`hidden md:grid items-center border-b border-gray-100 hover:bg-slate-50/80 transition-all group ${cfg.rowBorder} ${cfg.rowBg}`}
-        style={{ gridTemplateColumns: colWidths.map(w => `${w}px`).join(" ") }}
-      >
-        {/* 1 — Truck badge */}
-        <div className="px-4 py-4 min-w-0">
-          <div className={`inline-flex items-center justify-center w-full px-3 py-2.5 rounded-xl text-xs font-extrabold tracking-widest text-white font-mono shadow-md ${cfg.badgeBg}`}>
-            {s.truckNumber}
-          </div>
-          <p className="text-[10px] text-gray-400 text-center mt-1 uppercase tracking-wide">{s.truckType}</p>
-        </div>
-
-        {/* 2 — Owner / Driver */}
-        <div className="px-4 py-4 flex items-center gap-3 min-w-0">
-          <div className={`w-9 h-9 rounded-full bg-gradient-to-br ${avatarGradient(s.ownerName)} flex items-center justify-center text-white text-sm font-bold shrink-0 shadow-sm`}>
-            {s.ownerName.charAt(0).toUpperCase()}
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-gray-900 truncate">{s.ownerName}</p>
-            <p className="text-xs text-gray-400 truncate flex items-center gap-1 mt-0.5">
-              <User className="w-3 h-3 shrink-0" />{s.checkin_driver_name}
-            </p>
-          </div>
-        </div>
-
-        {/* 3 — Location */}
-        <div className="px-4 py-4 min-w-0">
-          <p className="text-sm font-medium text-gray-800 truncate flex items-center gap-1">
-            <MapPin className="w-3.5 h-3.5 shrink-0 text-blue-400" />{s.locationName}
-          </p>
-          <p className="text-xs text-gray-400 truncate mt-0.5 pl-5">
-            {s.divisionName}{s.slotCode !== "—" ? ` · Slot ${s.slotCode}` : ""}
-          </p>
-        </div>
-
-        {/* 4 — Check-in time */}
-        <div className="px-4 py-4 min-w-0">
-          <p className="text-sm font-semibold text-gray-800">{fmtDate(s.check_in_time)}</p>
-          <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
-            <Clock className="w-3 h-3 shrink-0" />{fmtTime(s.check_in_time)}
-          </p>
-        </div>
-
-        {/* 5 — Check-out time + driver verification */}
-        <div className="px-4 py-4 min-w-0">
-          {s.check_out_time ? (
-            <>
-              <p className="text-sm font-semibold text-teal-700">{fmtDate(s.check_out_time)}</p>
-              <p className="text-xs text-teal-500 mt-0.5 flex items-center gap-1">
-                <Clock className="w-3 h-3 shrink-0" />{fmtTime(s.check_out_time)}
-              </p>
-              {s.driver_match && (
-                <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full mt-1 ${
-                  s.driver_match === "match"    ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
-                  s.driver_match === "override" ? "bg-blue-50 text-blue-700 border border-blue-200" :
-                                                  "bg-rose-50 text-rose-700 border border-rose-200"
-                }`}>
-                  {s.driver_match === "match"    ? "✓ Verified" :
-                   s.driver_match === "override" ? "⊘ Override" : "✗ Mismatch"}
-                </span>
-              )}
-            </>
-          ) : (
-            <span className="text-sm text-gray-300 font-medium">—</span>
-          )}
-        </div>
-
-        {/* 6 — Type + Status stacked */}
-        <div className="px-4 py-4 flex flex-col gap-1.5 items-start">
-          <span className={`text-[11px] font-bold px-2.5 py-1 rounded-lg ${
-            s.entry_type?.toLowerCase() === "khata"
-              ? "bg-violet-100 text-violet-700"
-              : "bg-slate-100 text-slate-500"
-          }`}>
-            {s.entry_type?.toUpperCase() ?? "—"}
-          </span>
-          <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg whitespace-nowrap flex items-center gap-1.5 ${cfg.badgeCls}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${
-              s.status === "parked" ? "bg-emerald-500" :
-              s.status === "overdue" ? "bg-red-500" : "bg-teal-500"
-            }`} />
-            {cfg.badgeLabel}
-          </span>
-        </div>
-
-        {/* 7 — Actions */}
-        <div className="px-4 py-4 flex items-center gap-2">
-          <Link href={`/dashboard/trucks/${s.id}`} title="View details"
-            className="p-2 text-gray-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition">
-            <Eye className="w-3.5 h-3.5" />
-          </Link>
-          <button onClick={onEdit} title="Edit"
-            className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition">
-            <Pencil className="w-3.5 h-3.5" />
-          </button>
-          <button onClick={onDelete} title="Delete"
-            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition">
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-          {cfg.action === "checkout" && (
-            <Link href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`}
-              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-sm shadow-blue-200 transition">
-              <LogOut className="w-3.5 h-3.5" />Checkout
-            </Link>
-          )}
-          {cfg.action === "forceout" && (
-            <Link href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`}
-              className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-sm shadow-red-200 transition">
-              <ShieldX className="w-3.5 h-3.5" />Force out
-            </Link>
-          )}
-          {cfg.action === "receipt" && (
-            <button onClick={onReceipt}
-              className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-sm shadow-teal-200 transition">
-              <Receipt className="w-3.5 h-3.5" />Receipt
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* ── Inline delete confirmation ── */}
-      {deleteId === s.id && (
-        <div className="hidden md:flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border-b border-red-100">
-          <div className="flex items-center gap-2 text-sm text-red-700">
-            <Trash2 className="w-4 h-4 shrink-0" />
-            <span>Delete session for <span className="font-bold">{s.truckNumber}</span>? This cannot be undone.</span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button onClick={onDeleteCancel}
-              className="text-xs font-semibold text-gray-500 hover:text-gray-700 bg-white border border-gray-200 px-3 py-1.5 rounded-lg transition">
-              Cancel
-            </button>
-            <button onClick={() => onDeleteConfirm(s.id)} disabled={deleteBusy}
-              className="text-xs font-semibold text-white bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 disabled:opacity-60">
-              {deleteBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-              Yes, delete
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Mobile card ── */}
-      <div className={`md:hidden flex flex-col gap-3 px-4 py-4 border-b border-gray-50 ${cfg.rowBorder} ${cfg.rowBg}`}>
-        <div className="flex items-center justify-between gap-2">
-          <div className={`inline-flex items-center justify-center px-3 py-1.5 rounded-lg text-xs font-extrabold tracking-widest text-white font-mono shadow-sm ${cfg.badgeBg}`}>
-            {s.truckNumber}
-          </div>
-          <div className="flex items-center gap-1.5 flex-wrap justify-end">
-            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-lg ${
-              s.entry_type?.toLowerCase() === "khata" ? "bg-violet-100 text-violet-700" : "bg-slate-100 text-slate-500"
-            }`}>{s.entry_type?.toUpperCase()}</span>
-            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-lg ${cfg.badgeCls}`}>{cfg.badgeLabel}</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className={`w-9 h-9 rounded-full bg-gradient-to-br ${avatarGradient(s.ownerName)} flex items-center justify-center text-white text-sm font-bold shrink-0`}>
-            {s.ownerName.charAt(0).toUpperCase()}
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-gray-900">{s.ownerName}</p>
-            <p className="text-xs text-gray-400">{s.checkin_driver_name} · driver</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5 text-xs text-gray-500">
-          <MapPin className="w-3.5 h-3.5 text-blue-400 shrink-0" />{s.locationName} · {s.divisionName}
-        </div>
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-xs text-gray-500 space-y-0.5">
-            <div><span className="text-gray-400">In  </span><span className="font-medium">{fmtDate(s.check_in_time)}</span> <span className="text-gray-400">{fmtTime(s.check_in_time)}</span></div>
-            {s.check_out_time && (
-              <div>
-                <span className="text-gray-400">Out </span>
-                <span className="font-medium text-teal-700">{fmtDate(s.check_out_time)}</span>
-                <span className="text-teal-500"> {fmtTime(s.check_out_time)}</span>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-48 overflow-y-auto pr-1">
+                {moveSlots.map(sl => (
+                  <button key={sl.id} onClick={() => setMoveSlotId(sl.id)}
+                    className={`py-2 rounded-lg text-xs font-semibold border transition ${moveSlotId === sl.id
+                      ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
+                      : "bg-gray-50 dark:bg-slate-800/60 border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:border-indigo-300"}`}>
+                    {sl.code}
+                  </button>
+                ))}
               </div>
             )}
-            {s.driver_match && s.check_out_time && (
-              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                s.driver_match === "match"    ? "bg-emerald-50 text-emerald-700" :
-                s.driver_match === "override" ? "bg-blue-50 text-blue-700" :
-                                                "bg-rose-50 text-rose-700"
-              }`}>
-                {s.driver_match === "match" ? "✓" : s.driver_match === "override" ? "⊘" : "✗"}
-              </span>
+
+            {moveErr && (
+              <div className="flex items-center gap-2 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/20 text-red-600 dark:text-red-300 text-xs px-3.5 py-2.5 rounded-xl">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />{moveErr}
+              </div>
             )}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button onClick={onEdit} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"><Pencil className="w-3.5 h-3.5" /></button>
-            <button onClick={onDelete} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><Trash2 className="w-3.5 h-3.5" /></button>
-            {cfg.action === "checkout" && (
-              <Link href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`} className="flex items-center gap-1 bg-blue-600 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition">
-                <LogOut className="w-3 h-3" />Checkout
-              </Link>
+            {moveOk && (
+              <div className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs px-3.5 py-2.5 rounded-xl">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />Slot updated!
+              </div>
             )}
-            {cfg.action === "forceout" && (
-              <Link href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`} className="flex items-center gap-1 bg-red-600 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition">
-                <ShieldX className="w-3 h-3" />Force out
-              </Link>
-            )}
-            {cfg.action === "receipt" && (
-              <button onClick={onReceipt} className="flex items-center gap-1 bg-teal-600 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition">
-                <Receipt className="w-3 h-3" />Receipt
+
+            <div className="flex gap-3">
+              <button onClick={() => setMoveSession(null)}
+                className="flex-1 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 font-semibold py-2.5 rounded-xl transition text-sm">
+                Cancel
               </button>
-            )}
-          </div>
-        </div>
-        {/* mobile delete confirm */}
-        {deleteId === s.id && (
-          <div className="flex flex-col gap-2 bg-red-50 border border-red-100 rounded-xl p-3">
-            <p className="text-xs text-red-700 font-medium">Delete this session? This cannot be undone.</p>
-            <div className="flex gap-2">
-              <button onClick={onDeleteCancel} className="flex-1 text-xs font-semibold text-gray-600 bg-white border border-gray-200 py-2 rounded-lg transition">Cancel</button>
-              <button onClick={() => onDeleteConfirm(s.id)} disabled={deleteBusy}
-                className="flex-1 text-xs font-semibold text-white bg-red-600 py-2 rounded-lg transition flex items-center justify-center gap-1 disabled:opacity-60">
-                {deleteBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}Yes, delete
+              <button onClick={handleMoveSlot} disabled={moveBusy || !moveSlotId}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl transition text-sm flex items-center justify-center gap-2 disabled:opacity-50">
+                {moveBusy ? <><Loader2 className="w-4 h-4 animate-spin" />Moving…</> : "Confirm move"}
               </button>
             </div>
           </div>
         )}
-      </div>
-    </>
-  );
-}
+      </Overlay>
 
-// ── small reusable pieces ─────────────────────────────────────────────────────
-function ReceiptRow({ label, value }: { label: string; value: string | number | null | undefined }) {
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <span className="text-xs text-gray-400 shrink-0">{label}</span>
-      <span className="text-xs font-semibold text-gray-700 text-right">{value ?? "—"}</span>
+      {/* ── Receipt modal ── */}
+      <Overlay open={!!receiptSession} onClose={() => setReceiptSession(null)} variant="modal" title="Receipt" widthClass="max-w-sm">
+        {receiptSession && (
+          <div className="space-y-3">
+            <p className="text-xs text-gray-400 dark:text-slate-500 font-mono -mt-2">{receiptSession.truckNumber}</p>
+            <ReceiptRow label="Owner"      value={receiptSession.ownerName} />
+            <ReceiptRow label="Driver"     value={receiptSession.checkin_driver_name} />
+            <ReceiptRow label="Location"   value={`${receiptSession.locationName} · ${receiptSession.divisionName} · ${receiptSession.slotCode}`} />
+            <ReceiptRow label="Entry type" value={receiptSession.entry_type?.toUpperCase()} />
+            <ReceiptRow label="Check-in"   value={fmtDateTime(receiptSession.check_in_time)} />
+            <ReceiptRow label="Check-out"  value={fmtDateTime(receiptSession.check_out_time)} />
+            <div className="border-t border-gray-100 dark:border-slate-800 pt-3 space-y-2">
+              <ReceiptRow label={`${receiptSession.days ?? "—"} days × ₹${receiptSession.rate_per_day}/day`} value={`₹${receiptSession.subtotal?.toFixed(2) ?? "—"}`} />
+              <ReceiptRow label={`GST ${receiptSession.gst_percent}%`} value={`₹${receiptSession.gst_amount?.toFixed(2) ?? "—"}`} />
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-sm font-bold text-gray-700 dark:text-slate-200">Total</span>
+                <span className="text-lg font-extrabold text-gray-900 dark:text-white">₹{receiptSession.total_amount?.toFixed(2) ?? "—"}</span>
+              </div>
+            </div>
+            <button onClick={() => setReceiptSession(null)}
+              className="w-full border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 font-semibold py-2.5 rounded-xl transition text-sm mt-1">
+              Close
+            </button>
+          </div>
+        )}
+      </Overlay>
+
+      {/* ── Delete confirm modal ── */}
+      <Overlay open={!!deleteSession} onClose={() => setDeleteSession(null)} variant="modal" title="Delete session" widthClass="max-w-sm">
+        {deleteSession && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/20 rounded-xl p-3.5">
+              <Trash2 className="w-5 h-5 text-red-500 shrink-0" />
+              <p className="text-sm text-red-700 dark:text-red-300">
+                Delete session for <span className="font-bold">{deleteSession.truckNumber}</span>? This cannot be undone.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteSession(null)}
+                className="flex-1 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 font-semibold py-2.5 rounded-xl transition text-sm">
+                Cancel
+              </button>
+              <button onClick={() => handleDelete(deleteSession.id)} disabled={deleteBusy}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 rounded-xl transition text-sm flex items-center justify-center gap-2 disabled:opacity-60">
+                {deleteBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}Yes, delete
+              </button>
+            </div>
+          </div>
+        )}
+      </Overlay>
+
+      {/* ── Details drawer ── */}
+      <Overlay open={!!detailSession} onClose={() => setDetailSession(null)} variant="drawer" title="Truck Details" widthClass="max-w-lg">
+        {detailSession && <DetailsDrawerBody s={detailSession} approver={detailApprover} rules={overdueRules} />}
+      </Overlay>
     </div>
   );
 }
-function PagBtn({ disabled, onClick, children }: { disabled: boolean; onClick: () => void; children: React.ReactNode }) {
+
+// ── empty / loading states ─────────────────────────────────────────────────────
+function EmptyState({ icon, title, sub, cta }: { icon: React.ReactNode; title: string; sub: string; cta?: boolean }) {
   return (
-    <button disabled={disabled} onClick={onClick}
-      className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white disabled:opacity-30 disabled:pointer-events-none transition border border-transparent hover:border-gray-200">
-      {children}
-    </button>
+    <div className="px-5 py-16 text-center">
+      <div className="w-16 h-16 bg-gray-50 dark:bg-slate-800/60 rounded-2xl flex items-center justify-center mx-auto mb-3">
+        {icon}
+      </div>
+      <p className="text-sm font-medium text-gray-500 dark:text-slate-400">{title}</p>
+      <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">{sub}</p>
+      {cta && (
+        <Link href="/dashboard/check-in"
+          className="inline-flex items-center gap-2 mt-4 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm">
+          <Plus className="w-4 h-4" />Add Truck
+        </Link>
+      )}
+    </div>
+  );
+}
+function RowSkeleton() {
+  return (
+    <div className="rounded-2xl border border-gray-100 dark:border-slate-800 px-4 py-4 flex items-center gap-4">
+      <Skeleton className="w-24 h-8 rounded-lg shrink-0" />
+      <div className="flex-1 space-y-2">
+        <Skeleton className="h-3.5 w-40 rounded-full" />
+        <Skeleton className="h-3 w-56 rounded-full" />
+      </div>
+      <Skeleton className="w-20 h-6 rounded-full hidden sm:block" />
+      <Skeleton className="w-24 h-8 rounded-xl hidden md:block" />
+    </div>
   );
 }
 
-const selectCls = "pl-3 pr-8 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition appearance-none cursor-pointer";
+// ── truck row ─────────────────────────────────────────────────────────────────
+interface TruckRowProps {
+  session: Enriched;
+  index: number;
+  rules: OverdueRule[];
+  expanded: boolean;
+  onToggleExpand: () => void;
+  menuOpen: boolean;
+  onToggleMenu: () => void;
+  onCloseMenu: () => void;
+  onView: () => void;
+  onEdit: () => void;
+  onMoveSlot: () => void;
+  onReceipt: () => void;
+  onDelete: () => void;
+}
+function TruckRow({
+  session: s, index, rules, expanded, onToggleExpand,
+  menuOpen, onToggleMenu, onCloseMenu, onView, onEdit, onMoveSlot, onReceipt, onDelete,
+}: TruckRowProps) {
+  const key = deriveStatusKey(s);
+  const priority = priorityFor(key, s, rules);
+  const meta = STATUS_META[key];
+  const isActive = s.status === "parked" || s.status === "overdue";
+  const menuRef = useRef<HTMLDivElement>(null);
+  const mobileMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDocClick(e: MouseEvent) {
+      const target = e.target as Node;
+      const insideDesktop = menuRef.current?.contains(target);
+      const insideMobile = mobileMenuRef.current?.contains(target);
+      if (!insideDesktop && !insideMobile) onCloseMenu();
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [menuOpen, onCloseMenu]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, delay: Math.min(index, 10) * 0.02 }}
+      whileHover={{ y: -1 }}
+      style={{ zIndex: menuOpen ? 30 : undefined }}
+      className={`relative rounded-2xl border border-gray-100 dark:border-slate-800 overflow-visible transition-shadow hover:shadow-md ${
+        index % 2 === 1 ? "bg-slate-50/60 dark:bg-slate-800/20" : "bg-white/80 dark:bg-slate-900/50"
+      }`}
+    >
+      <div className={`absolute left-0 top-2 bottom-2 w-1 rounded-full ${PRIORITY_BAR[priority]}`} />
+
+      {/* Desktop row */}
+      <div
+        className="hidden md:grid items-center cursor-pointer"
+        style={{ gridTemplateColumns: GRID_COLS }}
+        onClick={onToggleExpand}
+      >
+        <div className="px-3 flex items-center justify-center text-gray-300 dark:text-slate-600">
+          {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+        </div>
+
+        {/* Truck */}
+        <div className="px-3 py-3.5 min-w-0">
+          <p className="text-sm font-bold font-mono text-gray-900 dark:text-white truncate flex items-center gap-1.5">
+            <TruckIcon className="w-3.5 h-3.5 text-gray-400 dark:text-slate-500 shrink-0" />{s.truckNumber}
+          </p>
+          <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5 truncate">{s.truckType}</p>
+          <p className="text-[11px] text-indigo-500 dark:text-indigo-400 mt-0.5 font-medium">
+            {s.check_out_time ? "Parked for " : "Parked for "}{fmtDuration(s.check_in_time, s.check_out_time)}
+          </p>
+        </div>
+
+        {/* Owner / Driver */}
+        <div className="px-3 py-3.5 flex items-center gap-2.5 min-w-0">
+          <Avatar name={s.ownerName} size="md" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{s.ownerName}</p>
+            <p className="text-[11px] text-gray-400 dark:text-slate-500 truncate flex items-center gap-1 mt-0.5">
+              {s.ownerMobile ? <><Phone className="w-2.5 h-2.5 shrink-0" />{s.ownerMobile}</> : <><User className="w-2.5 h-2.5 shrink-0" />{s.checkin_driver_name}</>}
+            </p>
+            <p className="text-[11px] text-gray-300 dark:text-slate-600 truncate flex items-center gap-1 mt-0.5">
+              <Building2 className="w-2.5 h-2.5 shrink-0" />{s.ownerCompany ?? <span className="italic">No firm</span>}
+            </p>
+          </div>
+        </div>
+
+        {/* Location */}
+        <div className="px-3 py-3.5 min-w-0">
+          <p className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate flex items-center gap-1">
+            <MapPin className="w-3.5 h-3.5 shrink-0 text-indigo-400" />{s.locationName}
+          </p>
+          <p className="text-[11px] text-gray-400 dark:text-slate-500 truncate mt-0.5 pl-4.5">
+            {s.divisionName}{s.slotCode !== "—" ? ` · Slot ${s.slotCode}` : ""}
+          </p>
+        </div>
+
+        {/* Timeline */}
+        <div className="px-3 py-3.5 min-w-0 text-xs space-y-1">
+          <div className="flex items-center gap-1.5 text-gray-700 dark:text-slate-200">
+            <LogIn className="w-3 h-3 text-emerald-500 shrink-0" />
+            <span className="font-semibold">{fmtDate(s.check_in_time)}</span>
+            <span className="text-gray-400 dark:text-slate-500">{fmtTime(s.check_in_time)}</span>
+          </div>
+          {s.check_out_time ? (
+            <div className="flex items-center gap-1.5 text-sky-600 dark:text-sky-400">
+              <LogOut className="w-3 h-3 shrink-0" />
+              <span className="font-semibold">{fmtDate(s.check_out_time)}</span>
+              <span className="opacity-70">{fmtTime(s.check_out_time)}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-gray-300 dark:text-slate-600 italic">
+              <Clock className="w-3 h-3 shrink-0" />Still Parked
+            </div>
+          )}
+        </div>
+
+        {/* Status */}
+        <div className="px-3 py-3.5 flex flex-col gap-1.5 items-start">
+          <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full border ${meta.chip}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
+            {statusLabel(key, s)}
+          </span>
+          {s.entry_type?.toLowerCase() === "khata" && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">KHATA</span>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="px-3 py-3.5 flex items-center gap-2" onClick={e => e.stopPropagation()}>
+          {key === "parked" && (
+            <Link href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`}
+              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition">
+              <LogOut className="w-3 h-3" />Checkout
+            </Link>
+          )}
+          {key === "overdue" && (
+            <Link href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`}
+              className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition">
+              <ShieldX className="w-3 h-3" />Force out
+            </Link>
+          )}
+          {(key === "checkedout" || key === "forced") && (
+            <button onClick={onReceipt}
+              className="flex items-center gap-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition">
+              <Receipt className="w-3 h-3" />Receipt
+            </button>
+          )}
+          {key === "verification" && (
+            <Link href="/dashboard/verification"
+              className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition">
+              <ShieldAlert className="w-3 h-3" />Verify
+            </Link>
+          )}
+
+          <div className="relative" ref={menuRef}>
+            <button onClick={onToggleMenu}
+              className="p-1.5 text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition">
+              <MoreVertical className="w-4 h-4" />
+            </button>
+            <AnimatePresence>
+              {menuOpen && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                  transition={{ duration: 0.12 }}
+                  className="absolute right-0 top-full mt-1 w-52 bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl shadow-xl z-20 py-1.5 overflow-hidden"
+                >
+                  <MenuItem icon={<Eye className="w-3.5 h-3.5" />} label="View Details" onClick={onView} />
+                  <MenuItem icon={<Pencil className="w-3.5 h-3.5" />} label="Edit" onClick={onEdit} />
+                  <MenuItem icon={<ArrowRightLeft className="w-3.5 h-3.5" />} label="Move Slot" onClick={onMoveSlot} disabled={!isActive} />
+                  <MenuItem icon={<ShieldAlert className="w-3.5 h-3.5" />} label="Driver Verification" href="/dashboard/verification" disabled={s.driver_match !== "mismatch"} />
+                  <MenuItem icon={<Receipt className="w-3.5 h-3.5" />} label="Generate Receipt" onClick={onReceipt} disabled={s.status !== "released"} />
+                  <MenuItem icon={<ShieldX className="w-3.5 h-3.5" />} label="Force Checkout" href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`} disabled={!isActive} danger />
+                  <div className="my-1 border-t border-gray-100 dark:border-slate-800" />
+                  <MenuItem icon={<Trash2 className="w-3.5 h-3.5" />} label="Delete" onClick={onDelete} danger />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile card */}
+      <div className="md:hidden flex flex-col gap-3 px-4 py-4 pl-5" onClick={onToggleExpand}>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-bold font-mono text-gray-900 dark:text-white flex items-center gap-1.5">
+            <TruckIcon className="w-3.5 h-3.5 text-gray-400 shrink-0" />{s.truckNumber}
+          </p>
+          <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${meta.chip}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />{statusLabel(key, s)}
+          </span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <Avatar name={s.ownerName} size="sm" />
+          <div>
+            <p className="text-sm font-semibold text-gray-900 dark:text-white">{s.ownerName}</p>
+            <p className="text-xs text-gray-400 dark:text-slate-500">{s.checkin_driver_name} · driver</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
+          <MapPin className="w-3.5 h-3.5 text-indigo-400 shrink-0" />{s.locationName} · {s.divisionName}
+        </div>
+        <div className="flex items-center justify-between gap-2" onClick={e => e.stopPropagation()}>
+          <div className="text-xs text-gray-500 dark:text-slate-400 space-y-0.5">
+            <div><span className="text-gray-400 dark:text-slate-500">In </span><span className="font-medium">{fmtDate(s.check_in_time)}</span></div>
+            {s.check_out_time && <div><span className="text-gray-400 dark:text-slate-500">Out </span><span className="font-medium text-sky-600 dark:text-sky-400">{fmtDate(s.check_out_time)}</span></div>}
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            {key === "parked" && <Link href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`} className="flex items-center gap-1 bg-indigo-600 text-white text-xs font-bold px-3 py-2 rounded-xl transition"><LogOut className="w-3 h-3" />Checkout</Link>}
+            {key === "overdue" && <Link href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`} className="flex items-center gap-1 bg-red-600 text-white text-xs font-bold px-3 py-2 rounded-xl transition"><ShieldX className="w-3 h-3" />Force out</Link>}
+            {(key === "checkedout" || key === "forced") && <button onClick={onReceipt} className="flex items-center gap-1 bg-slate-700 text-white text-xs font-bold px-3 py-2 rounded-xl transition"><Receipt className="w-3 h-3" />Receipt</button>}
+            {key === "verification" && <Link href="/dashboard/verification" className="flex items-center gap-1 bg-rose-600 text-white text-xs font-bold px-3 py-2 rounded-xl transition"><ShieldAlert className="w-3 h-3" />Verify</Link>}
+
+            <div className="relative" ref={mobileMenuRef}>
+              <button onClick={onToggleMenu} className="p-2 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition">
+                <MoreVertical className="w-4 h-4" />
+              </button>
+              <AnimatePresence>
+                {menuOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                    transition={{ duration: 0.12 }}
+                    className="absolute right-0 bottom-full mb-1 w-52 bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl shadow-xl z-20 py-1.5 overflow-hidden"
+                  >
+                    <MenuItem icon={<Eye className="w-3.5 h-3.5" />} label="View Details" onClick={onView} />
+                    <MenuItem icon={<Pencil className="w-3.5 h-3.5" />} label="Edit" onClick={onEdit} />
+                    <MenuItem icon={<ArrowRightLeft className="w-3.5 h-3.5" />} label="Move Slot" onClick={onMoveSlot} disabled={!isActive} />
+                    <MenuItem icon={<ShieldAlert className="w-3.5 h-3.5" />} label="Driver Verification" href="/dashboard/verification" disabled={s.driver_match !== "mismatch"} />
+                    <MenuItem icon={<Receipt className="w-3.5 h-3.5" />} label="Generate Receipt" onClick={onReceipt} disabled={s.status !== "released"} />
+                    <MenuItem icon={<ShieldX className="w-3.5 h-3.5" />} label="Force Checkout" href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`} disabled={!isActive} danger />
+                    <div className="my-1 border-t border-gray-100 dark:border-slate-800" />
+                    <MenuItem icon={<Trash2 className="w-3.5 h-3.5" />} label="Delete" onClick={onDelete} danger />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Expansion panel */}
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
+            className="overflow-hidden"
+          >
+            <ExpansionPanel s={s} statusKey={key} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+function MenuItem({ icon, label, onClick, href, disabled, danger }: {
+  icon: React.ReactNode; label: string; onClick?: () => void; href?: string; disabled?: boolean; danger?: boolean;
+}) {
+  const cls = `w-full flex items-center gap-2.5 px-3.5 py-2 text-xs font-semibold transition ${
+    disabled
+      ? "text-gray-300 dark:text-slate-700 cursor-not-allowed"
+      : danger
+      ? "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10"
+      : "text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800"
+  }`;
+  if (href && !disabled) {
+    return <Link href={href} className={cls}>{icon}{label}</Link>;
+  }
+  return <button onClick={disabled ? undefined : onClick} disabled={disabled} className={cls}>{icon}{label}</button>;
+}
+
+// ── row expansion panel ─────────────────────────────────────────────────────────
+function ExpansionPanel({ s, statusKey }: { s: Enriched; statusKey: StatusKey }) {
+  const isReleased = s.status === "released";
+  return (
+    <div className="border-t border-gray-100 dark:border-slate-800 px-4 py-4 pl-5 grid grid-cols-1 lg:grid-cols-3 gap-4 bg-gray-50/50 dark:bg-slate-800/20">
+      <div>
+        <p className="text-[11px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5"><History className="w-3 h-3" />Timeline</p>
+        <div className="space-y-2 text-xs">
+          <div className="flex items-center gap-2 text-gray-700 dark:text-slate-200">
+            <LogIn className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+            <span>Checked in {fmtDateTime(s.check_in_time)}</span>
+          </div>
+          {s.check_out_time ? (
+            <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400">
+              <LogOut className="w-3.5 h-3.5 shrink-0" />
+              <span>Checked out {fmtDateTime(s.check_out_time)}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-gray-400 dark:text-slate-500 italic">
+              <Clock className="w-3.5 h-3.5 shrink-0" />Still parked · {fmtDuration(s.check_in_time, null)} so far
+            </div>
+          )}
+        </div>
+
+        <p className="text-[11px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-wider mt-3 mb-1.5">Verification</p>
+        {s.driver_match === "match" ? (
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 px-2 py-1 rounded-lg"><ShieldCheck className="w-3 h-3" />Verified</span>
+        ) : s.driver_match === "override" ? (
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/20 px-2 py-1 rounded-lg"><ShieldCheck className="w-3 h-3" />Override approved</span>
+        ) : s.driver_match === "mismatch" ? (
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 px-2 py-1 rounded-lg"><ShieldAlert className="w-3 h-3" />Mismatch</span>
+        ) : (
+          <span className="text-xs text-gray-400 dark:text-slate-500">Pending</span>
+        )}
+      </div>
+
+      <div>
+        <p className="text-[11px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5"><IndianRupee className="w-3 h-3" />Parking Charges</p>
+        {isReleased ? (
+          <div className="space-y-1 text-xs">
+            <div className="flex justify-between"><span className="text-gray-400 dark:text-slate-500">{s.days ?? "—"}d × ₹{s.rate_per_day}</span><span className="font-semibold text-gray-700 dark:text-slate-200">₹{s.subtotal?.toFixed(2) ?? "—"}</span></div>
+            <div className="flex justify-between"><span className="text-gray-400 dark:text-slate-500">GST {s.gst_percent}%</span><span className="font-semibold text-gray-700 dark:text-slate-200">₹{s.gst_amount?.toFixed(2) ?? "—"}</span></div>
+            <div className="flex justify-between pt-1 border-t border-gray-100 dark:border-slate-800"><span className="font-bold text-gray-700 dark:text-slate-200">Total</span><span className="font-extrabold text-gray-900 dark:text-white">₹{s.total_amount?.toFixed(2) ?? "—"}</span></div>
+            <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 rounded-full"><CheckCircle2 className="w-2.5 h-2.5" />Paid</span>
+          </div>
+        ) : (
+          <div className="text-xs text-gray-400 dark:text-slate-500">
+            <p>₹{s.rate_per_day}/day · {statusKey === "overdue" ? "accruing" : "in progress"}</p>
+            <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 px-2 py-0.5 rounded-full"><Clock className="w-2.5 h-2.5" />Pending</span>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <p className="text-[11px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5"><StickyNote className="w-3 h-3" />Documents &amp; Notes</p>
+        <div className="space-y-1.5 text-xs text-gray-600 dark:text-slate-300">
+          <p className="flex items-center gap-1.5"><FileText className="w-3 h-3 text-gray-300 dark:text-slate-600 shrink-0" />{s.checkin_id_proof_type ?? "No ID proof on file"}</p>
+          <p className="flex items-center gap-1.5"><Hash className="w-3 h-3 text-gray-300 dark:text-slate-600 shrink-0" />{s.checkin_driver_licence ?? "No licence on file"}</p>
+          {(s.checkin_remarks || s.checkout_remarks) ? (
+            <p className="text-gray-500 dark:text-slate-400 italic pt-1">&ldquo;{s.checkout_remarks ?? s.checkin_remarks}&rdquo;</p>
+          ) : (
+            <p className="text-gray-300 dark:text-slate-600 italic pt-1">No notes</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── full details drawer ─────────────────────────────────────────────────────────
+function DetailsDrawerBody({ s, approver, rules }: { s: Enriched; approver: UserData | null; rules: OverdueRule[] }) {
+  const key = deriveStatusKey(s);
+  const meta = STATUS_META[key];
+  const isReleased = s.status === "released";
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <p className="text-lg font-bold font-mono text-gray-900 dark:text-white">{s.truckNumber}</p>
+          <p className="text-xs text-gray-400 dark:text-slate-500">{s.truckType}</p>
+        </div>
+        <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border ${meta.chip}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />{statusLabel(key, s)}
+        </span>
+      </div>
+
+      <Link href={`/dashboard/trucks/${s.id}`} className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
+        <ExternalLink className="w-3 h-3" />Open full session page
+      </Link>
+
+      <div className="rounded-2xl border border-gray-100 dark:border-slate-800 p-4">
+        <p className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-3">Truck &amp; Driver</p>
+        <div className="grid grid-cols-2 gap-3">
+          <DetailField label="Owner" value={s.ownerName} />
+          <DetailField label="Company" value={s.ownerCompany} />
+          <DetailField label="Owner Phone" value={s.ownerMobile} mono />
+          <DetailField label="Driver" value={s.checkin_driver_name} />
+          <DetailField label="Driver Mobile" value={s.checkin_driver_mobile} mono />
+          <DetailField label="Licence" value={s.checkin_driver_licence} mono />
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-gray-100 dark:border-slate-800 p-4">
+        <p className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-3">Parking</p>
+        <div className="grid grid-cols-2 gap-3">
+          <DetailField label="Location" value={s.locationName} />
+          <DetailField label="Division / Slot" value={`${s.divisionName} · ${s.slotCode}`} />
+          <DetailField label="Entry type" value={s.entry_type?.toUpperCase()} />
+          <DetailField label="Rate / day" value={`₹${s.rate_per_day}`} />
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-gray-100 dark:border-slate-800 p-4">
+        <p className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-3 flex items-center gap-1.5"><History className="w-3.5 h-3.5" />Timeline &amp; Activity</p>
+        <div className="space-y-3">
+          <div className="flex gap-3">
+            <div className="w-7 h-7 rounded-full bg-emerald-100 dark:bg-emerald-500/15 flex items-center justify-center shrink-0"><LogIn className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-300" /></div>
+            <div>
+              <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">Checked in</p>
+              <p className="text-xs text-gray-400 dark:text-slate-500">{fmtDateTime(s.check_in_time)} by {s.checkin_driver_name}</p>
+            </div>
+          </div>
+          {s.driver_match && s.driver_match !== "pending" && (
+            <div className="flex gap-3">
+              <div className="w-7 h-7 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center shrink-0"><ShieldCheck className="w-3.5 h-3.5 text-gray-500 dark:text-slate-300" /></div>
+              <div>
+                <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">Driver verification: {s.driver_match}</p>
+                {s.override_by && <p className="text-xs text-gray-400 dark:text-slate-500">Approved by {approver?.name ?? approver?.full_name ?? approver?.username ?? approver?.email ?? "Admin"}</p>}
+              </div>
+            </div>
+          )}
+          {isReleased ? (
+            <div className="flex gap-3">
+              <div className="w-7 h-7 rounded-full bg-sky-100 dark:bg-sky-500/15 flex items-center justify-center shrink-0"><LogOut className="w-3.5 h-3.5 text-sky-600 dark:text-sky-300" /></div>
+              <div>
+                <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">Checked out</p>
+                <p className="text-xs text-gray-400 dark:text-slate-500">{fmtDateTime(s.check_out_time)} by {s.checkout_driver_name ?? "—"}</p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex gap-3 opacity-50">
+              <div className="w-7 h-7 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center shrink-0"><Clock className="w-3.5 h-3.5 text-gray-400" /></div>
+              <p className="text-xs text-gray-400 dark:text-slate-500 pt-1.5">Still parked · {fmtDuration(s.check_in_time, null)} so far{s.status === "overdue" ? ` (${topMatchedRule(s.check_in_time, rules)?.label ?? "overdue"})` : ""}</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-gray-100 dark:border-slate-800 p-4">
+        <p className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-3 flex items-center gap-1.5"><Wallet className="w-3.5 h-3.5" />Payment</p>
+        {isReleased ? (
+          <div className="space-y-1.5 text-sm">
+            <div className="flex justify-between"><span className="text-gray-500 dark:text-slate-400">Subtotal</span><span className="font-semibold text-gray-800 dark:text-slate-200">₹{s.subtotal?.toFixed(2) ?? "—"}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500 dark:text-slate-400">GST ({s.gst_percent}%)</span><span className="font-semibold text-gray-800 dark:text-slate-200">₹{s.gst_amount?.toFixed(2) ?? "—"}</span></div>
+            <div className="flex justify-between border-t border-gray-100 dark:border-slate-800 pt-1.5"><span className="font-bold text-gray-700 dark:text-slate-200">Total</span><span className="font-extrabold text-gray-900 dark:text-white">₹{s.total_amount?.toFixed(2) ?? "—"}</span></div>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400 dark:text-slate-500">Billing finalizes at checkout · ₹{s.rate_per_day}/day</p>
+        )}
+      </div>
+
+      {(s.checkin_remarks || s.checkout_remarks) && (
+        <div className="rounded-2xl border border-gray-100 dark:border-slate-800 p-4">
+          <p className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><StickyNote className="w-3.5 h-3.5" />Notes</p>
+          {s.checkin_remarks && <p className="text-xs text-gray-600 dark:text-slate-300 mb-1">Check-in: {s.checkin_remarks}</p>}
+          {s.checkout_remarks && <p className="text-xs text-gray-600 dark:text-slate-300">Check-out: {s.checkout_remarks}</p>}
+        </div>
+      )}
+    </div>
+  );
+}

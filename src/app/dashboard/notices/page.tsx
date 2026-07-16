@@ -2,13 +2,17 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { createPortal } from "react-dom";
+import { motion, AnimatePresence } from "motion/react";
 import {
   ChevronRight, Bell, BellOff, CheckCircle2, AlertTriangle,
   AlertCircle, Clock, Truck, X, Loader2, Plus, RefreshCw,
-  ChevronDown, ChevronLeft, Phone, Info, CheckCheck, Search,
+  ChevronDown, ChevronLeft, Phone, Info, CheckCheck, Search, Check,
 } from "lucide-react";
 
 const PER_PAGE = 15;
+
+import { handleUnauthorized } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -21,6 +25,10 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", token, ...(opts?.headers ?? {}) },
     ...opts,
   });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error("Your session has expired. Redirecting to login…");
+  }
   if (!res.ok) {
     const e = await res.json().catch(() => ({ detail: "Request failed" }));
     throw new Error((e as { detail?: string }).detail ?? "Request failed");
@@ -47,18 +55,18 @@ interface Session   { id: string; truck_id: string | null; owner_id: string | nu
 function noticeConfig(type: string) {
   const t = type.toLowerCase();
   if (t.includes("mismatch") || t.includes("driver"))
-    return { label: "Driver mismatch", dot: "bg-red-400",    badge: "bg-red-100 text-red-700 border-red-200",    row: "bg-red-50/40",   icon: <AlertCircle  className="w-3.5 h-3.5 text-red-500" />    };
+    return { label: "Driver mismatch", dot: "bg-red-400",    badge: "bg-red-100 text-red-700 border-red-200",    row: "bg-red-50/40",   Icon: AlertCircle,   iconColor: "text-red-500",     grad: "from-red-500 to-rose-600"     };
   if (t.includes("overdue") || t.includes("khata"))
-    return { label: "Overdue",         dot: "bg-rose-400",   badge: "bg-rose-100 text-rose-700 border-rose-200",  row: "bg-rose-50/40",  icon: <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />  };
+    return { label: "Overdue",         dot: "bg-rose-400",   badge: "bg-rose-100 text-rose-700 border-rose-200",  row: "bg-rose-50/40",  Icon: AlertTriangle, iconColor: "text-rose-500",    grad: "from-rose-500 to-pink-600"    };
   if (t.includes("capacity") || t.includes("full"))
-    return { label: "Capacity",        dot: "bg-amber-400",  badge: "bg-amber-100 text-amber-700 border-amber-200", row: "bg-amber-50/40",icon: <AlertTriangle className="w-3.5 h-3.5 text-amber-500" /> };
+    return { label: "Capacity",        dot: "bg-amber-400",  badge: "bg-amber-100 text-amber-700 border-amber-200", row: "bg-amber-50/40",Icon: AlertTriangle, iconColor: "text-amber-500",   grad: "from-amber-500 to-orange-500" };
   if (t.includes("remind") || t.includes("day"))
-    return { label: "Reminder",        dot: "bg-blue-400",   badge: "bg-blue-100 text-blue-700 border-blue-200",   row: "bg-blue-50/30",  icon: <Clock        className="w-3.5 h-3.5 text-blue-500" />   };
+    return { label: "Reminder",        dot: "bg-blue-400",   badge: "bg-blue-100 text-blue-700 border-blue-200",   row: "bg-blue-50/30",  Icon: Clock,         iconColor: "text-blue-500",    grad: "from-blue-500 to-indigo-600"  };
   if (t.includes("damage") || t.includes("note"))
-    return { label: "Damage note",     dot: "bg-orange-400", badge: "bg-orange-100 text-orange-700 border-orange-200", row: "", icon: <Info className="w-3.5 h-3.5 text-orange-500" /> };
+    return { label: "Damage note",     dot: "bg-orange-400", badge: "bg-orange-100 text-orange-700 border-orange-200", row: "", Icon: Info,       iconColor: "text-orange-500",  grad: "from-orange-500 to-red-500"   };
   if (t.includes("receipt"))
-    return { label: "Receipt sent",    dot: "bg-emerald-400",badge: "bg-emerald-100 text-emerald-700 border-emerald-200", row: "", icon: <CheckCheck className="w-3.5 h-3.5 text-emerald-500" /> };
-  return   { label: type.replace(/_/g," "), dot: "bg-gray-300", badge: "bg-gray-100 text-gray-600 border-gray-200", row: "", icon: <Bell className="w-3.5 h-3.5 text-gray-400" /> };
+    return { label: "Receipt sent",    dot: "bg-emerald-400",badge: "bg-emerald-100 text-emerald-700 border-emerald-200", row: "", Icon: CheckCheck, iconColor: "text-emerald-500", grad: "from-emerald-500 to-teal-600"  };
+  return   { label: type.replace(/_/g," "), dot: "bg-gray-300", badge: "bg-gray-100 text-gray-600 border-gray-200", row: "", Icon: Bell, iconColor: "text-gray-400", grad: "from-gray-400 to-slate-500" };
 }
 
 function fmtTime(iso: string | null) {
@@ -124,6 +132,121 @@ function SuccessToast({ onDone }: { onDone: () => void }) {
   );
 }
 
+// ── Notice type dropdown (modern, portal-positioned, mobile-safe) ─────────────
+interface NoticeTypeOption { code: string; label: string; description?: string | null }
+
+function NoticeTypeSelect({ value, onChange, options, placeholder = "Select type…" }: {
+  value: string; onChange: (v: string) => void; options: NoticeTypeOption[]; placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [rect,  setRect]  = useState<DOMRect | null>(null);
+  const btnRef   = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLUListElement>(null);
+
+  function openDropdown() {
+    if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+    setOpen(true);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function reposition() { if (btnRef.current) setRect(btnRef.current.getBoundingClientRect()); }
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => { window.removeEventListener("scroll", reposition, true); window.removeEventListener("resize", reposition); };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (
+        panelRef.current && !panelRef.current.contains(e.target as Node) &&
+        btnRef.current   && !btnRef.current.contains(e.target as Node)
+      ) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") setOpen(false); }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+
+  const selected = options.find(o => o.code === value) ?? null;
+  const selectedCfg = selected ? noticeConfig(selected.code) : null;
+  const estimatedPanelHeight = 320;
+  const openUp = rect ? rect.bottom + estimatedPanelHeight > window.innerHeight && rect.top > window.innerHeight - rect.bottom : false;
+  const panelStyle: React.CSSProperties = rect ? {
+    position: "fixed", left: rect.left, width: rect.width, zIndex: 10000,
+    ...(openUp ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }),
+  } : { display: "none" };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => open ? setOpen(false) : openDropdown()}
+        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-sm text-left transition-all ${
+          open
+            ? "border-blue-500 ring-4 ring-blue-50 bg-white"
+            : "border-gray-200 bg-gray-50 hover:border-blue-300 hover:bg-blue-50/20"
+        }`}
+      >
+        {selected && selectedCfg ? (
+          <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${selectedCfg.grad} flex items-center justify-center shrink-0 shadow-sm`}>
+            <selectedCfg.Icon className="w-4 h-4 text-white" />
+          </span>
+        ) : (
+          <span className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
+            <Bell className="w-3.5 h-3.5 text-gray-400" />
+          </span>
+        )}
+        <span className={`flex-1 truncate ${selected ? "font-semibold text-gray-900" : "font-medium text-gray-400"}`}>
+          {selected ? selected.label : placeholder}
+        </span>
+        <ChevronDown className={`w-4 h-4 text-gray-400 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && typeof window !== "undefined" && createPortal(
+        <AnimatePresence>
+          <motion.ul
+            ref={panelRef}
+            style={panelStyle}
+            initial={{ opacity: 0, y: openUp ? 6 : -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: openUp ? 6 : -6, scale: 0.98 }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+            className="bg-white border border-gray-100 rounded-2xl shadow-xl shadow-gray-200/60 overflow-hidden py-1.5 max-h-80 overflow-y-auto"
+          >
+            {options.map(o => {
+              const cfg = noticeConfig(o.code);
+              const isSelected = o.code === value;
+              return (
+                <li key={o.code}>
+                  <button
+                    type="button"
+                    onClick={() => { onChange(o.code); setOpen(false); }}
+                    className={`w-full flex items-start gap-3 px-3.5 py-2.5 text-left transition ${isSelected ? "bg-blue-50" : "hover:bg-gray-50"}`}
+                  >
+                    <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${cfg.grad} flex items-center justify-center shrink-0 shadow-sm mt-0.5`}>
+                      <cfg.Icon className="w-4 h-4 text-white" />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-semibold truncate ${isSelected ? "text-blue-700" : "text-gray-800"}`}>{o.label}</p>
+                      {o.description && <p className="text-[11px] text-gray-400 mt-0.5 line-clamp-2">{o.description}</p>}
+                    </div>
+                    {isSelected && <Check className="w-4 h-4 text-blue-600 shrink-0 mt-1" />}
+                  </button>
+                </li>
+              );
+            })}
+          </motion.ul>
+        </AnimatePresence>,
+        document.body
+      )}
+    </>
+  );
+}
+
 // ── Add Notice Modal ──────────────────────────────────────────────────────────
 const TRUCK_PAGE_SIZE = 8;
 
@@ -146,6 +269,15 @@ function AddNoticeModal({
   const [fMsg,  setFMsg]  = useState("");
   const [fErr,  setFErr]  = useState("");
   const [fBusy, setFBusy] = useState(false);
+
+  const noticeTypeOptions: NoticeTypeOption[] = alertTypes.length > 0
+    ? alertTypes.map(at => ({ code: at.code, label: at.name ?? at.code, description: at.description }))
+    : [
+        { code: "general_reminder", label: "General reminder" },
+        { code: "damage_note",      label: "Damage note" },
+        { code: "overdue",          label: "Overdue" },
+        { code: "capacity_warning", label: "Capacity warning" },
+      ];
 
   // load all trucks on mount
   useEffect(() => {
@@ -235,7 +367,7 @@ function AddNoticeModal({
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md"
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto"
         style={{ animation: "modal-in .25s ease both" }}>
 
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
@@ -338,24 +470,7 @@ function AddNoticeModal({
             <label className="block text-xs font-semibold text-gray-600 mb-1.5">
               Notice type <span className="text-red-400">*</span>
             </label>
-            <div className="relative">
-              <select value={fType} onChange={e => { setFType(e.target.value); setFErr(""); }}
-                className={inputCls + " appearance-none pr-9 cursor-pointer"}>
-                <option value="">Select type…</option>
-                {alertTypes.map(at => (
-                  <option key={at.id} value={at.code}>{at.name ?? at.code}</option>
-                ))}
-                {alertTypes.length === 0 && (
-                  <>
-                    <option value="general_reminder">General reminder</option>
-                    <option value="damage_note">Damage note</option>
-                    <option value="overdue">Overdue</option>
-                    <option value="capacity_warning">Capacity warning</option>
-                  </>
-                )}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-            </div>
+            <NoticeTypeSelect value={fType} onChange={(v) => { setFType(v); setFErr(""); }} options={noticeTypeOptions} />
           </div>
 
           {/* ── message ── */}
@@ -574,7 +689,7 @@ export default function NoticesPage() {
               const crit = ["mismatch","driver","overdue"].some(k => notice.notice_type.toLowerCase().includes(k));
               return (
                 <div key={notice.id} className="flex items-start gap-3 px-5 py-3.5">
-                  <div className="mt-0.5 shrink-0">{cfg.icon}</div>
+                  <div className="mt-0.5 shrink-0"><cfg.Icon className={`w-3.5 h-3.5 ${cfg.iconColor}`} /></div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${cfg.badge}`}>{cfg.label}</span>
@@ -667,7 +782,7 @@ export default function NoticesPage() {
                       {/* type */}
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5">
-                          {cfg.icon}
+                          <cfg.Icon className={`w-3.5 h-3.5 ${cfg.iconColor}`} />
                           <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${cfg.badge}`}>
                             {cfg.label}
                           </span>

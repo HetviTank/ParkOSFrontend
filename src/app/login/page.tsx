@@ -294,7 +294,7 @@ function LoginForm({ onForgot }: { onForgot: () => void }) {
       localStorage.setItem("refresh_token", data.refresh_token);
       localStorage.setItem(
         "user",
-        JSON.stringify({ id: data.id, name: data.name, email: data.email, role: data.role })
+        JSON.stringify({ id: data.id, name: data.name, email: data.email, location_id: data.location_id, role: data.role })
       );
       window.location.href = "/dashboard";
     } catch (err) {

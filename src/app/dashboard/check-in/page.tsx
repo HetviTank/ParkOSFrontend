@@ -12,6 +12,8 @@ import {
   Layers, Zap, SquareParking, Lock,
 } from "lucide-react";
 
+import { handleUnauthorized, isAdminRole } from "@/lib/auth";
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -25,6 +27,10 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", token, ...(opts?.headers ?? {}) },
     ...opts,
   });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error("Your session has expired. Redirecting to login…");
+  }
   if (!res.ok) {
     const e = await res.json().catch(() => ({ detail: "Request failed" }));
     throw new Error((e as { detail?: string }).detail ?? "Request failed");
@@ -51,6 +57,14 @@ interface SlotItem   { id: string; code: string; status: string }
 interface KhataItem  { id: string; owner_id: string; monthly_rate: number; billing_day: number; grace_days: number; is_active: boolean; is_deleted: boolean }
 
 const TRUCK_TYPES   = ["Heavy (20T+)", "Heavy (10-20T)", "Medium (5-10T)", "Light (<5T)", "Trailer", "Tanker"];
+const TRUCK_TYPE_META: Record<string, { color: string; abbr: string }> = {
+  "Heavy (20T+)":   { color: "from-red-500 to-rose-600",      abbr: "H+" },
+  "Heavy (10-20T)": { color: "from-orange-500 to-red-500",    abbr: "H"  },
+  "Medium (5-10T)": { color: "from-amber-500 to-orange-500",  abbr: "M"  },
+  "Light (<5T)":    { color: "from-emerald-500 to-teal-600",  abbr: "L"  },
+  "Trailer":        { color: "from-indigo-500 to-violet-600", abbr: "Tr" },
+  "Tanker":         { color: "from-cyan-500 to-blue-600",     abbr: "Tk" },
+};
 const ID_PROOFS: Record<string, string> = {
   aadhaar: "Aadhaar Card", pan: "PAN Card",
   driving_license: "Driving License", passport: "Passport", voter_id: "Voter ID",
@@ -114,7 +128,7 @@ export default function CheckInPage() {
   const [slotLoading,  setSlotLoading]  = useState(false);
 
   // super admin and admin can choose any location; other roles are locked to their assigned one
-  const canSelectLocation = ["Super Admin", "Admin"].includes(userProfile?.role?.name ?? "");
+  const canSelectLocation = isAdminRole(userProfile?.role?.name);
 
   const selectedDiv = divisions.find((d) => d.id === divisionId) ?? null;
   const freeSlots   = slots.filter(s => s.status === "free");
@@ -206,7 +220,7 @@ export default function CheckInPage() {
     ]).then(([profile, locRes]) => {
       setUserProfile(profile);
       setLocations(locRes.list);
-      const isAdmin = ["Super Admin", "Admin"].includes(profile?.role?.name ?? "");
+      const isAdmin = isAdminRole(profile?.role?.name);
       if (!isAdmin && profile.location_id) {
         // lock to their assigned location
         setLocationId(profile.location_id);
@@ -469,7 +483,7 @@ export default function CheckInPage() {
 
   // ── form ──────────────────────────────────────────────────────────────────
   return (
-    <div className="px-4 sm:px-5 lg:px-6 py-5 w-full space-y-4">
+    <div className="px-3 sm:px-5 lg:px-6 py-4 sm:py-5 pb-28 lg:pb-5 w-full space-y-4">
 
       {/* Page header */}
       <div className="relative overflow-hidden bg-gradient-to-r from-blue-600 via-blue-600 to-indigo-700 rounded-2xl shadow-lg shadow-blue-200 px-6 py-5">
@@ -492,24 +506,24 @@ export default function CheckInPage() {
       </div>
 
       {/* Step indicator */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-6 py-4">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-4 sm:px-6 py-3 sm:py-4">
         <div className="flex items-center">
           {STEPS.map((step, idx) => (
             <div key={step.n} className="flex items-center flex-1 last:flex-none">
-              <div className="flex items-center gap-2.5 shrink-0">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+              <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
                   idx === 0
-                    ? "bg-blue-600 text-white shadow-md shadow-blue-200 ring-4 ring-blue-100"
+                    ? "bg-blue-600 text-white shadow-md shadow-blue-200 ring-2 sm:ring-4 ring-blue-100"
                     : "bg-gray-100 text-gray-400"
                 }`}>
                   {step.n}
                 </div>
-                <span className={`text-sm hidden sm:block ${idx === 0 ? "font-bold text-blue-700" : "font-medium text-gray-400"}`}>
+                <span className={`text-[10px] sm:text-sm leading-tight ${idx === 0 ? "font-bold text-blue-700" : "font-medium text-gray-400"}`}>
                   {step.label}
                 </span>
               </div>
               {idx < STEPS.length - 1 && (
-                <div className="flex-1 mx-3 hidden sm:flex items-center">
+                <div className="flex-1 mx-1.5 sm:mx-3 flex items-center">
                   <div className={`h-0.5 w-full rounded-full ${idx === 0 ? "bg-gradient-to-r from-blue-200 to-gray-100" : "bg-gray-100"}`} />
                 </div>
               )}
@@ -519,11 +533,11 @@ export default function CheckInPage() {
       </div>
 
       {/* Main form */}
-      <form onSubmit={handleSubmit}>
-        <div className="grid grid-cols-1 xl:grid-cols-5 gap-5">
+      <form id="checkin-form" onSubmit={handleSubmit}>
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
 
-          {/* ── LEFT COLUMN ── */}
-          <div className="xl:col-span-3 space-y-5">
+          {/* ── TRUCK & OWNER (mobile: 1st · desktop: left col row 1) ── */}
+          <div className="order-1 lg:col-span-3 space-y-4">
 
             {/* Truck & owner card */}
             <FormCard
@@ -555,14 +569,7 @@ export default function CheckInPage() {
 
                 <div>
                   <label className={labelCls}>Truck type <Required /></label>
-                  <select
-                    value={truckType}
-                    onChange={(e) => setTruckType(e.target.value)}
-                    className={selectCls}
-                  >
-                    <option value="">Select type…</option>
-                    {TRUCK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                  </select>
+                  <TruckTypeDropdown value={truckType} onChange={setTruckType} />
                 </div>
               </div>
 
@@ -667,6 +674,10 @@ export default function CheckInPage() {
                 </div>
               </div>
             </FormCard>
+          </div>
+
+          {/* ── LOCATION · RATE · TIME · SUBMIT (mobile: 2nd · desktop: right col) ── */}
+          <div className="order-2 lg:col-span-2 lg:row-span-2 space-y-4">
 
             {/* Driver card */}
             <FormCard
@@ -711,10 +722,6 @@ export default function CheckInPage() {
                 />
               </div>
             </FormCard>
-          </div>
-
-          {/* ── RIGHT COLUMN ── */}
-          <div className="xl:col-span-2 space-y-4">
 
             {/* Location & Slot card */}
             <FormCard
@@ -1121,6 +1128,101 @@ const selectCls =
   "w-full px-3.5 py-2.5 text-sm text-gray-900 bg-white border border-gray-200 " +
   "rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 " +
   "shadow-sm transition appearance-none cursor-pointer";
+
+// ── TruckTypeDropdown — modern, portal-positioned, mobile-safe ────────────────
+function TruckTypeDropdown({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [rect,  setRect]  = useState<DOMRect | null>(null);
+  const btnRef   = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  function openDropdown() {
+    if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+    setOpen(true);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function reposition() { if (btnRef.current) setRect(btnRef.current.getBoundingClientRect()); }
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => { window.removeEventListener("scroll", reposition, true); window.removeEventListener("resize", reposition); };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (
+        panelRef.current && !panelRef.current.contains(e.target as Node) &&
+        btnRef.current   && !btnRef.current.contains(e.target as Node)
+      ) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") setOpen(false); }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+
+  const meta = value ? TRUCK_TYPE_META[value] : null;
+  const estimatedPanelHeight = 300;
+  const openUp = rect ? rect.bottom + estimatedPanelHeight > window.innerHeight && rect.top > window.innerHeight - rect.bottom : false;
+  const panelStyle: React.CSSProperties = rect ? {
+    position: "fixed", left: rect.left, width: rect.width, zIndex: 9999,
+    ...(openUp ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }),
+  } : { display: "none" };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => open ? setOpen(false) : openDropdown()}
+        className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl border text-sm text-left shadow-sm transition-all ${
+          open ? "border-blue-400 ring-2 ring-blue-400/20 bg-white" : "border-gray-200 bg-white hover:border-blue-300"
+        }`}
+      >
+        {meta ? (
+          <span className={`w-7 h-7 rounded-lg bg-gradient-to-br ${meta.color} flex items-center justify-center shrink-0 shadow-sm`}>
+            <span className="text-[10px] font-black text-white">{meta.abbr}</span>
+          </span>
+        ) : (
+          <span className="w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
+            <TruckIcon className="w-3.5 h-3.5 text-gray-400" />
+          </span>
+        )}
+        <span className={`flex-1 truncate ${value ? "font-semibold text-gray-900" : "font-medium text-gray-400"}`}>
+          {value || "Select type…"}
+        </span>
+        <ChevronDown className={`w-4 h-4 text-gray-400 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && typeof window !== "undefined" && createPortal(
+        <div ref={panelRef} style={panelStyle}
+          className="bg-white rounded-2xl border border-gray-200 shadow-2xl shadow-gray-300/40 overflow-hidden py-1.5 max-h-80 overflow-y-auto">
+          {TRUCK_TYPES.map(t => {
+            const m = TRUCK_TYPE_META[t];
+            const isSelected = t === value;
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => { onChange(t); setOpen(false); }}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left transition ${isSelected ? "bg-blue-50" : "hover:bg-gray-50"}`}
+              >
+                <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${m.color} flex items-center justify-center shrink-0 shadow-sm`}>
+                  <span className="text-[10px] font-black text-white">{m.abbr}</span>
+                </span>
+                <span className={`flex-1 text-sm font-semibold truncate ${isSelected ? "text-blue-700" : "text-gray-800"}`}>{t}</span>
+                {isSelected && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
+              </button>
+            );
+          })}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
 
 // ── DivisionDropdown ──────────────────────────────────────────────────────────
 function divTypeStyle(t: string) {

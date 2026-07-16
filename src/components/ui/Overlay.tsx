@@ -64,14 +64,19 @@ export function Overlay({
           />
 
           {variant === "modal" ? (
-            <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
+            // Bottom sheet on mobile (full-width, anchored to bottom edge), centered modal from sm: up —
+            // same shared component, no behavior change for existing callers beyond this responsive shape.
+            <div className="absolute inset-0 flex items-end sm:items-center justify-center sm:p-4 pointer-events-none">
               <motion.div
-                initial={{ opacity: 0, scale: 0.96, y: 8 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.96, y: 8 }}
-                transition={{ duration: 0.2, ease: "easeOut" }}
-                className={`pointer-events-auto relative bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full ${widthClass ?? "max-w-lg"} max-h-[90vh] overflow-y-auto`}
+                initial={{ opacity: 0, y: 40 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 40 }}
+                transition={{ duration: 0.22, ease: "easeOut" }}
+                className={`pointer-events-auto relative bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl w-full ${widthClass ?? "max-w-lg"} max-h-[85vh] sm:max-h-[90vh] overflow-y-auto`}
               >
+                <div className="sm:hidden flex justify-center pt-2 pb-1">
+                  <div className="w-10 h-1 rounded-full bg-gray-200 dark:bg-slate-700" />
+                </div>
                 <OverlayHeader title={title} onClose={onClose} />
                 <div className="px-6 pb-6 pt-4">{children}</div>
               </motion.div>

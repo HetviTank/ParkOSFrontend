@@ -9,6 +9,7 @@ import {
   AlertTriangle, ShieldAlert, ShieldCheck, ShieldX,
   User, Phone, MapPin, Clock, Loader2,
   AlertCircle, BadgeCheck, Search, Download, Eye, Truck,
+  CheckCircle2, Circle, Hash, CalendarClock,
 } from "lucide-react";
 import {
   useReactTable, getCoreRowModel, getSortedRowModel, getPaginationRowModel,
@@ -19,6 +20,8 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Overlay } from "@/components/ui/Overlay";
+
+import { handleUnauthorized } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -32,6 +35,10 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", token, ...(opts?.headers ?? {}) },
     ...opts,
   });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error("Your session has expired. Redirecting to login…");
+  }
   if (!res.ok) {
     const e = await res.json().catch(() => ({ detail: "Request failed" }));
     throw new Error((e as { detail?: string }).detail ?? "Request failed");
@@ -128,6 +135,16 @@ function fmtTime(iso: string | null | undefined): string {
 
 function isSameDay(a: Date, b: Date): boolean {
   return a.toDateString() === b.toDateString();
+}
+
+function calcDuration(checkIn: string | null | undefined): string {
+  if (!checkIn) return "—";
+  const ms = Date.now() - new Date(checkIn).getTime();
+  if (ms <= 0) return "< 1m";
+  const d = Math.floor(ms / 86400000), h = Math.floor((ms % 86400000) / 3600000);
+  if (d > 0) return `${d}d ${h}h`;
+  const m = Math.floor((ms % 3600000) / 60000);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
 function matchesDateFilter(iso: string | null, filter: DateFilter, customFrom: string, customTo: string): boolean {
@@ -251,6 +268,34 @@ function StatCard({ icon: Icon, iconBg, iconColor, label, value }: {
 }
 
 // ── mismatch review (verbatim existing resolution flow, moved into a modal) ──
+function InfoField({ icon, label, value, mono, href }: {
+  icon: React.ReactNode; label: string; value: string; mono?: boolean; href?: string;
+}) {
+  const valueCls = `text-sm font-semibold text-gray-800 dark:text-slate-200 truncate ${mono ? "font-mono" : ""} ${href ? "hover:text-indigo-600 dark:hover:text-indigo-400 transition" : ""}`;
+  return (
+    <div className="min-w-0">
+      <p className="flex items-center gap-1 text-[10px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide mb-1">{icon}{label}</p>
+      {href ? <a href={href} className={valueCls}>{value}</a> : <p className={valueCls}>{value}</p>}
+    </div>
+  );
+}
+
+function TimelineStep({ label, sub, done, danger }: { label: string; sub: string; done?: boolean; danger?: boolean }) {
+  return (
+    <div className="flex items-start gap-3">
+      {danger
+        ? <ShieldAlert className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+        : done
+        ? <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+        : <Circle className="w-4 h-4 text-gray-300 dark:text-slate-600 shrink-0 mt-0.5" />}
+      <div className="min-w-0">
+        <p className={`text-sm font-medium truncate ${danger ? "text-red-700 dark:text-red-300" : done ? "text-gray-900 dark:text-white" : "text-gray-400 dark:text-slate-500"}`}>{label}</p>
+        <p className="text-xs text-gray-400 dark:text-slate-500 truncate">{sub}</p>
+      </div>
+    </div>
+  );
+}
+
 function MismatchReview({
   mismatch, mismatches, activeIdx, setActiveIdx,
   overrideNote, setOverrideNote, approving, approveError, setApproveError,
@@ -268,8 +313,16 @@ function MismatchReview({
   onApprove: () => void;
   onKeepHold: () => void;
 }) {
+  const [confirmChecked, setConfirmChecked] = useState(false);
+  const [prevMismatchId, setPrevMismatchId] = useState(mismatch.id);
+  if (mismatch.id !== prevMismatchId) {
+    setPrevMismatchId(mismatch.id);
+    setConfirmChecked(false);
+  }
+  const canApprove = !!overrideNote.trim() && confirmChecked;
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {mismatches.length > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Mismatch alert — truck on hold</p>
@@ -287,88 +340,118 @@ function MismatchReview({
         </div>
       )}
 
-      <div className="bg-red-50 dark:bg-red-500/10 border-2 border-red-200 dark:border-red-500/30 rounded-2xl px-6 py-5 text-center">
-        <p className="text-lg font-extrabold text-red-700 dark:text-red-400 tracking-wide">{mismatch.truckNumber} — EXIT BLOCKED</p>
-        <p className="text-sm text-red-500 dark:text-red-400/80 mt-1">Driver at gate does not match the registered check-in driver</p>
+      {/* ── Hero: security alert ── */}
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-red-600 via-red-600 to-rose-700 px-6 py-7 text-center shadow-lg shadow-red-200 dark:shadow-none">
+        <div className="absolute -left-10 -top-10 w-40 h-40 rounded-full bg-white/10" />
+        <div className="absolute -right-6 -bottom-10 w-36 h-36 rounded-full bg-white/5" />
+        <div className="relative flex justify-center mb-3">
+          <span className="relative flex h-14 w-14 items-center justify-center">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/30" />
+            <span className="relative inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-white/15 border border-white/25">
+              <ShieldAlert className="w-7 h-7 text-white" />
+            </span>
+          </span>
+        </div>
+        <p className="relative text-[11px] font-bold text-red-100 uppercase tracking-[0.2em] mb-1.5">Security Verification Failed</p>
+        <p className="relative text-2xl font-black text-white font-mono tracking-wide">{mismatch.truckNumber}</p>
+        <p className="relative text-sm font-bold text-red-50 mt-1">Exit Blocked</p>
+        <p className="relative text-xs text-red-100/80 mt-1.5 max-w-sm mx-auto">Driver at the gate does not match the registered check-in driver.</p>
       </div>
 
+      {/* ── quick call actions ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="bg-blue-50 dark:bg-blue-500/10 border border-blue-100 dark:border-blue-500/20 rounded-2xl p-5">
-          <p className="text-xs font-bold text-blue-500 dark:text-blue-300 uppercase tracking-wider mb-3">Registered check-in driver</p>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-200 dark:bg-blue-500/25 flex items-center justify-center shrink-0">
-              <User className="w-5 h-5 text-blue-700 dark:text-blue-300" />
-            </div>
-            <div>
-              <p className="text-sm font-bold text-blue-900 dark:text-blue-200">{mismatch.checkin_driver_name}</p>
-              <p className="text-xs text-blue-600 dark:text-blue-400 mt-0.5 flex items-center gap-1">
-                <Phone className="w-3 h-3" />{mismatch.checkin_driver_mobile}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl p-5">
-          <p className="text-xs font-bold text-red-500 dark:text-red-300 uppercase tracking-wider mb-3">Driver presented at gate</p>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-red-200 dark:bg-red-500/25 flex items-center justify-center shrink-0">
-              <User className="w-5 h-5 text-red-700 dark:text-red-300" />
-            </div>
-            <div>
-              <p className="text-sm font-bold text-red-900 dark:text-red-200">{mismatch.checkout_driver_name ?? "Unknown"}</p>
-              <p className="text-xs text-red-500 dark:text-red-400 mt-0.5 flex items-center gap-1">
-                <Phone className="w-3 h-3" />{mismatch.checkout_driver_mobile ?? "Not provided"}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="bg-white dark:bg-slate-800/60 border border-gray-100 dark:border-slate-700 shadow-sm rounded-2xl p-5 flex items-start gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-slate-700 flex items-center justify-center shrink-0">
-            <User className="w-4 h-4 text-gray-500 dark:text-slate-300" />
-          </div>
-          <div>
-            <p className="text-xs text-gray-400 dark:text-slate-500 font-medium">Truck owner</p>
-            <p className="text-sm font-bold text-gray-900 dark:text-white mt-0.5">{mismatch.ownerName}</p>
-            {mismatch.ownerMobile && (
-              <a href={`tel:${mismatch.ownerMobile}`} className="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 flex items-center gap-1 mt-0.5 transition">
-                <Phone className="w-3 h-3" />{mismatch.ownerMobile}
-              </a>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-slate-800/60 border border-gray-100 dark:border-slate-700 shadow-sm rounded-2xl p-5 flex items-start gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-slate-700 flex items-center justify-center shrink-0">
-            <MapPin className="w-4 h-4 text-gray-500 dark:text-slate-300" />
-          </div>
-          <div>
-            <p className="text-xs text-gray-400 dark:text-slate-500 font-medium">Location / Slot</p>
-            <p className="text-sm font-bold text-gray-900 dark:text-white mt-0.5">{mismatch.locationName}</p>
-            <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">{mismatch.slotLabel}</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <a
-          href={`tel:${mismatch.ownerMobile}`}
-          className="flex items-center justify-center gap-2.5 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold py-3.5 rounded-2xl shadow-sm shadow-amber-200 dark:shadow-none transition text-sm"
-        >
-          <Phone className="w-4 h-4" />
-          Call owner
+        <a href={`tel:${mismatch.ownerMobile}`}
+          className="flex items-center justify-center gap-2.5 min-h-12 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold rounded-2xl shadow-sm shadow-amber-200 dark:shadow-none transition text-sm">
+          <Phone className="w-4 h-4" />Call owner
         </a>
-        <a
-          href={`tel:${mismatch.checkin_driver_mobile}`}
-          className="flex items-center justify-center gap-2.5 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-bold py-3.5 rounded-2xl shadow-sm shadow-orange-200 dark:shadow-none transition text-sm"
-        >
-          <Phone className="w-4 h-4" />
-          Call check-in driver
+        <a href={`tel:${mismatch.checkin_driver_mobile}`}
+          className="flex items-center justify-center gap-2.5 min-h-12 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-bold rounded-2xl shadow-sm shadow-orange-200 dark:shadow-none transition text-sm">
+          <Phone className="w-4 h-4" />Call check-in driver
         </a>
       </div>
 
+      {/* ── two-column detail section ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* left column */}
+        <div className="space-y-4">
+          <div className="bg-blue-50 dark:bg-blue-500/10 border border-blue-100 dark:border-blue-500/20 rounded-2xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-bold text-blue-500 dark:text-blue-300 uppercase tracking-wider">Registered check-in driver</p>
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-500/20 px-2 py-0.5 rounded-full whitespace-nowrap">
+                <ShieldCheck className="w-3 h-3" />On file
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-blue-200 dark:bg-blue-500/25 flex items-center justify-center shrink-0">
+                <User className="w-5 h-5 text-blue-700 dark:text-blue-300" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-blue-900 dark:text-blue-200 truncate">{mismatch.checkin_driver_name}</p>
+                <p className="text-xs text-blue-600 dark:text-blue-400 mt-0.5 flex items-center gap-1">
+                  <Phone className="w-3 h-3" />{mismatch.checkin_driver_mobile}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-slate-800/60 border border-gray-100 dark:border-slate-700 shadow-sm rounded-2xl p-5">
+            <p className="text-xs font-bold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-3">Truck information</p>
+            <div className="grid grid-cols-2 gap-3.5">
+              <InfoField icon={<Truck className="w-3 h-3" />} label="Truck" value={mismatch.truckNumber} mono />
+              <InfoField icon={<User className="w-3 h-3" />} label="Owner" value={mismatch.ownerName} href={mismatch.ownerMobile ? `tel:${mismatch.ownerMobile}` : undefined} />
+              <InfoField icon={<MapPin className="w-3 h-3" />} label="Location" value={mismatch.locationName} />
+              <InfoField icon={<Hash className="w-3 h-3" />} label="Slot" value={mismatch.slotLabel} />
+              <InfoField icon={<CalendarClock className="w-3 h-3" />} label="Checked in" value={fmtTime(mismatch.check_in_time)} />
+              <InfoField icon={<Clock className="w-3 h-3" />} label="Duration" value={calcDuration(mismatch.check_in_time)} />
+            </div>
+          </div>
+        </div>
+
+        {/* right column */}
+        <div className="space-y-4">
+          <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-bold text-red-500 dark:text-red-300 uppercase tracking-wider">Driver presented at gate</p>
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-500/20 px-2 py-0.5 rounded-full whitespace-nowrap">
+                <ShieldAlert className="w-3 h-3" />Unverified
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-red-200 dark:bg-red-500/25 flex items-center justify-center shrink-0">
+                <User className="w-5 h-5 text-red-700 dark:text-red-300" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-red-900 dark:text-red-200 truncate">{mismatch.checkout_driver_name ?? "Unknown"}</p>
+                <p className="text-xs text-red-500 dark:text-red-400 mt-0.5 flex items-center gap-1">
+                  <Phone className="w-3 h-3" />{mismatch.checkout_driver_mobile ?? "Not provided"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-slate-800/60 border border-gray-100 dark:border-slate-700 shadow-sm rounded-2xl p-5">
+            <p className="text-xs font-bold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-3">Verification timeline</p>
+            <div className="space-y-3">
+              <TimelineStep done label="Check-in completed" sub={fmtTime(mismatch.check_in_time)} />
+              <TimelineStep done label="Driver registered" sub={mismatch.checkin_driver_name} />
+              <TimelineStep done danger label="Driver mismatch detected" sub="Identity does not match the record on file" />
+              <TimelineStep label="Waiting for admin approval" sub="Truck remains on hold until reviewed" />
+            </div>
+          </div>
+
+          <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-2xl p-5">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Recommended action</p>
+              <span className="text-[10px] font-bold text-white bg-red-500 px-2 py-0.5 rounded-full whitespace-nowrap">High risk</span>
+            </div>
+            <p className="text-sm text-amber-900 dark:text-amber-200">
+              Keep this truck on hold and confirm the driver&apos;s identity with the owner before releasing it.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Admin override ── */}
       <div className="bg-white dark:bg-slate-800/60 border border-gray-100 dark:border-slate-700 shadow-sm rounded-2xl p-5 space-y-3">
         <p className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Admin override</p>
         <textarea
@@ -378,24 +461,44 @@ function MismatchReview({
           placeholder="Enter reason for override and admin confirmation code…"
           className="w-full px-3.5 py-3 text-sm text-gray-900 dark:text-white bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition resize-none"
         />
+        <label className="flex items-start gap-2.5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={confirmChecked}
+            onChange={e => { setConfirmChecked(e.target.checked); setApproveError(""); }}
+            className="mt-0.5 w-4 h-4 accent-indigo-600 shrink-0"
+          />
+          <span className="text-xs text-gray-600 dark:text-slate-300">
+            I confirm this override has been verified manually and I take responsibility for releasing this truck.
+          </span>
+        </label>
         {approveError && (
           <div className="flex items-center gap-2 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-xl px-3.5 py-2.5">
             <AlertCircle className="w-4 h-4 text-red-500 dark:text-red-400 shrink-0" />
             <p className="text-sm text-red-700 dark:text-red-300">{approveError}</p>
           </div>
         )}
+      </div>
+
+      {/* ── sticky action footer ── */}
+      <div className="sticky bottom-0 -mx-6 -mb-6 px-6 pt-3 pb-6 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-t border-gray-100 dark:border-slate-800">
+        <div className="flex items-center justify-between mb-2.5">
+          <span className="text-[11px] font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wide">Risk level</span>
+          <span className="text-[11px] font-bold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 px-2 py-0.5 rounded-full">High</span>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <button
             onClick={onApprove}
-            disabled={approving}
-            className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:bg-emerald-300 text-white font-bold py-3.5 rounded-2xl shadow-sm shadow-emerald-200 dark:shadow-none transition text-sm"
+            disabled={approving || !canApprove}
+            title={!canApprove ? "Enter a reason and confirm manual verification to continue" : undefined}
+            className="flex items-center justify-center gap-2 min-h-12 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:bg-emerald-300 disabled:cursor-not-allowed text-white font-bold rounded-2xl shadow-sm shadow-emerald-200 dark:shadow-none transition text-sm"
           >
             {approving ? <><Loader2 className="w-4 h-4 animate-spin" />Approving…</> : <><BadgeCheck className="w-4 h-4" />Approve &amp; checkout</>}
           </button>
           <button
             onClick={onKeepHold}
             disabled={approving}
-            className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 active:bg-red-800 disabled:bg-red-300 text-white font-bold py-3.5 rounded-2xl shadow-sm shadow-red-200 dark:shadow-none transition text-sm"
+            className="flex items-center justify-center gap-2 min-h-12 bg-red-600 hover:bg-red-700 active:bg-red-800 disabled:bg-red-300 text-white font-bold rounded-2xl shadow-sm shadow-red-200 dark:shadow-none transition text-sm"
           >
             <ShieldX className="w-4 h-4" />
             Keep hold
@@ -556,9 +659,14 @@ export default function VerificationPage() {
     return () => clearInterval(t);
   }, [loadMismatches]);
 
-  // Auto-close the review modal once every mismatch is resolved.
+  // Auto-open the review modal whenever a pending mismatch appears — a driver
+  // mismatch blocks a truck's exit, so it takes over as the primary focus of
+  // the screen rather than waiting on the admin to notice the banner. Auto-
+  // closes once every mismatch is resolved. Keyed on count (not the mismatches
+  // array reference) so a 30s poll that finds no new/resolved mismatches
+  // doesn't re-force the modal open if the admin deliberately dismissed it.
   useEffect(() => {
-    if (mismatches.length === 0) setReviewOpen(false);
+    setReviewOpen(mismatches.length > 0);
   }, [mismatches.length]);
 
   async function handleRefreshAll() {
@@ -835,7 +943,7 @@ export default function VerificationPage() {
               {mismatches.length} Driver Verification{mismatches.length > 1 ? "s" : ""} Require Attention
             </p>
             <p className="text-xs text-red-500 dark:text-red-400/80 mt-0.5 truncate">
-              {mismatches.map(m => m.truckNumber).join(", ")} on hold — owner and check-in driver notified automatically
+              {mismatches.map(m => m.truckNumber).join(", ")} on hold — awaiting admin review before release
             </p>
           </div>
           <button
@@ -960,7 +1068,7 @@ export default function VerificationPage() {
       </GlassCard>
 
       {/* ── Mismatch review modal ── */}
-      <Overlay open={reviewOpen && !!mismatch} onClose={() => setReviewOpen(false)} variant="modal" widthClass="max-w-2xl" title="Mismatch Review">
+      <Overlay open={reviewOpen && !!mismatch} onClose={() => setReviewOpen(false)} variant="modal" widthClass="max-w-[960px]" title="Mismatch Review">
         {mismatch && (
           <MismatchReview
             mismatch={mismatch}

@@ -3,12 +3,11 @@
 import { useState, useEffect } from "react";
 import { Menu, Car } from "lucide-react";
 import Sidebar from "./Sidebar";
-import { ThemeProvider, useTheme } from "./ThemeProvider";
+import { ThemeProvider } from "./ThemeProvider";
 
 function ShellInner({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const { theme } = useTheme();
 
   useEffect(() => {
     const saved = localStorage.getItem("sidebar-collapsed");
@@ -22,12 +21,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div
-      id="theme-root"
-      suppressHydrationWarning
-      className="relative flex h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-indigo-50/40 to-cyan-50/40 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950"
-      style={{ colorScheme: theme }}
-    >
+    <div className="relative flex h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-indigo-50/40 to-cyan-50/40 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
       {/* Ambient background blobs */}
       <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
         <div className="absolute -top-32 -left-20 w-96 h-96 rounded-full bg-indigo-300/20 dark:bg-indigo-500/10 blur-3xl animate-blob" />

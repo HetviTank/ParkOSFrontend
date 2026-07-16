@@ -14,15 +14,22 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   // resolved theme applies before the user ever sees a frame — no flash,
   // and no <script> tag (React 19 won't execute one on a client-only
   // render, e.g. Fast Refresh or any future client-side remount).
+  // Applied to <html> (not a wrapper div) so that portaled content — modals,
+  // drawers, toasts rendered via createPortal to document.body — is still a
+  // descendant of the [data-theme] element and picks up dark: styles too.
   useLayoutEffect(() => {
     const stored = localStorage.getItem("theme") === "dark" ? "dark" : "light";
-    document.getElementById("theme-root")?.setAttribute("data-theme", stored);
+    document.documentElement.setAttribute("data-theme", stored);
+    document.documentElement.style.colorScheme = stored;
     setThemeState(stored);
     setMounted(true);
   }, []);
 
   useEffect(() => {
-    if (mounted) document.getElementById("theme-root")?.setAttribute("data-theme", theme);
+    if (mounted) {
+      document.documentElement.setAttribute("data-theme", theme);
+      document.documentElement.style.colorScheme = theme;
+    }
   }, [theme, mounted]);
 
   function toggleTheme() {

@@ -1,5 +1,6 @@
 import type { LoginRequest, LoginResponse, ForgotPasswordRequest, ConfirmForgotPasswordRequest } from "@/types/auth";
 import type { DashboardResponse } from "@/types/dashboard";
+import { handleUnauthorized } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -11,6 +12,11 @@ async function request<T>(
     headers: { "Content-Type": "application/json", ...options.headers },
     ...options,
   });
+
+  if (res.status === 401 && path !== "/login") {
+    handleUnauthorized();
+    throw new Error("Your session has expired. Redirecting to login…");
+  }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: "Something went wrong." }));
