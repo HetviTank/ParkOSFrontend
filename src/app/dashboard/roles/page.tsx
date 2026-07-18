@@ -110,8 +110,10 @@ export default function RolesPage() {
   async function openEdit(r: Role) {
     setEditRole(r); setFName(r.name); setFError(""); setLoadingOps(true); setDrawer("edit");
     try {
-      const full = await apiFetch<{ id: string; name: string; editable: boolean; operations: OpItem[] }>(`/roles/${r.id}`);
-      setSelectedOps(new Set((full.operations ?? []).map(o => o.id)));
+      // GET /roles/{id} returns `operations` as a plain array of operation-ID
+      // strings (not {id, name} objects) — see RoleDetails in the backend schema.
+      const full = await apiFetch<{ id: string; name: string; operations: string[] }>(`/roles/${r.id}`);
+      setSelectedOps(new Set(full.operations ?? []));
     } catch { setSelectedOps(new Set()); }
     finally { setLoadingOps(false); }
   }
@@ -119,8 +121,8 @@ export default function RolesPage() {
   async function openView(r: Role) {
     setViewRole(r); setViewOps([]); setViewLoading(true);
     try {
-      const full = await apiFetch<{ operations: OpItem[] }>(`/roles/${r.id}`);
-      setViewOps((full.operations ?? []).map(o => o.id));
+      const full = await apiFetch<{ operations: string[] }>(`/roles/${r.id}`);
+      setViewOps(full.operations ?? []);
     } catch { setViewOps([]); }
     finally { setViewLoading(false); }
   }

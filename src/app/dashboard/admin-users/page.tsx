@@ -6,7 +6,7 @@ import {
   ChevronRight, ChevronLeft, ChevronRight as ChevronRightIcon, ChevronDown,
   UserPlus, Search, Loader2, AlertCircle,
   Pencil, Key, Trash2, X, Check, Eye, EyeOff, RefreshCw,
-  Users, Shield, MapPin, UserCog, Building2,
+  Users, Shield, ShieldOff, MapPin, UserCog, Building2,
 } from "lucide-react";
 
 import { handleUnauthorized } from "@/lib/auth";
@@ -42,8 +42,18 @@ interface AdminUser {
   id: string; name: string; email: string;
   location_id: string | null; role: Role | null;
 }
+interface OpItem  { id: string; name: string }
+interface OpGroup { id: string; name: string; operations: OpItem[] }
 
 const PAGE_SIZE = 10;
+
+const GROUP_COLORS = [
+  "bg-blue-100 text-blue-700",     "bg-violet-100 text-violet-700",
+  "bg-emerald-100 text-emerald-700","bg-amber-100 text-amber-700",
+  "bg-rose-100 text-rose-700",     "bg-indigo-100 text-indigo-700",
+  "bg-teal-100 text-teal-700",     "bg-orange-100 text-orange-700",
+];
+const groupColor = (idx: number) => GROUP_COLORS[idx % GROUP_COLORS.length];
 
 const AVATAR_GRADIENTS = [
   "from-blue-500 to-blue-700",
@@ -65,6 +75,7 @@ export default function AdminUsersPage() {
   const [search,      setSearch]      = useState("");
   const [roles,     setRoles]     = useState<Role[]>([]);
   const [locations, setLocations] = useState<LocItem[]>([]);
+  const [opGroups,  setOpGroups]  = useState<OpGroup[]>([]);
 
   // drawer
   const [drawer,    setDrawer]    = useState<"add" | "edit" | null>(null);
@@ -100,6 +111,11 @@ export default function AdminUsersPage() {
   const [delError,  setDelError]  = useState("");
   const [deleting,  setDeleting]  = useState(false);
 
+  // view selected role's permissions (from the Role picker in the add/edit drawer)
+  const [viewRole,    setViewRole]    = useState<Role | null>(null);
+  const [viewOps,     setViewOps]     = useState<string[]>([]);
+  const [viewLoading, setViewLoading] = useState(false);
+
   useEffect(() => {
     const t = setTimeout(() => { setSearch(searchInput); setPage(1); }, 500);
     return () => clearTimeout(t);
@@ -108,7 +124,19 @@ export default function AdminUsersPage() {
   useEffect(() => {
     apiFetch<{ count: number; list: Role[] }>("/roles?start=0&limit=100&sort_by=name&order=asc").then(r => setRoles(r.list)).catch(() => {});
     apiFetch<{ list: LocItem[] }>("/locations?limit=100").then(r => setLocations(r.list)).catch(() => {});
+    apiFetch<OpGroup[]>("/operations/all").then(setOpGroups).catch(() => {});
   }, []);
+
+  async function openRoleView(role: Role) {
+    setViewRole(role); setViewOps([]); setViewLoading(true);
+    try {
+      // GET /roles/{id} returns `operations` as a plain array of operation-ID
+      // strings (not {id, name} objects) — see RoleDetails in the backend schema.
+      const full = await apiFetch<{ operations?: string[] }>(`/roles/${role.id}`);
+      setViewOps(full.operations ?? []);
+    } catch { setViewOps([]); }
+    finally { setViewLoading(false); }
+  }
 
   const fetchUsers = useCallback(async (p: number, q: string) => {
     setLoading(true); setListError("");
@@ -468,7 +496,21 @@ export default function AdminUsersPage() {
                   </div>
                 </Field>
               )}
-              <Field label="Role" required>
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-gray-600">
+                    Role<span className="text-red-400 ml-0.5">*</span>
+                  </label>
+                  {fRoleId && (
+                    <button
+                      type="button"
+                      onClick={() => { const r = roles.find(x => x.id === fRoleId); if (r) openRoleView(r); }}
+                      className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800 transition"
+                    >
+                      <Eye className="w-3.5 h-3.5" />View permissions
+                    </button>
+                  )}
+                </div>
                 <div className="relative" ref={roleDropRef}>
                   <button
                     type="button"
@@ -519,7 +561,7 @@ export default function AdminUsersPage() {
                     </div>
                   )}
                 </div>
-              </Field>
+              </div>
               <Field label="Location" hint="Leave empty to allow access to all locations.">
                 <LocationSelect
                   value={fLocationId}
@@ -580,6 +622,72 @@ export default function AdminUsersPage() {
             </button>
           </div>
         </Modal>
+      )}
+
+      {/* ── Role Permissions View Modal ── */}
+      {viewRole && (
+        <div className="fixed inset-0 z-50 bg-black/25 backdrop-blur-sm flex items-end sm:items-center justify-center p-4" onClick={() => setViewRole(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
+                  <Shield className="w-5 h-5 text-blue-500" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900">{viewRole.name}</h3>
+                  <p className="text-xs text-gray-400">{viewOps.length} permissions</p>
+                </div>
+              </div>
+              <button onClick={() => setViewRole(null)} className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto px-5 py-4 space-y-3">
+              {viewLoading ? (
+                <div className="flex items-center justify-center py-10 gap-2 text-gray-400">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span className="text-sm">Loading permissions…</span>
+                </div>
+              ) : viewOps.length === 0 ? (
+                <div className="py-10 text-center">
+                  <ShieldOff className="w-10 h-10 text-gray-200 mx-auto mb-2" />
+                  <p className="text-sm text-gray-400">No permissions assigned</p>
+                </div>
+              ) : opGroups.map((group, gi) => {
+                const granted = group.operations.filter(o => viewOps.includes(o.id));
+                if (!granted.length) return null;
+                return (
+                  <div key={group.id} className="bg-gray-50 rounded-2xl border border-gray-100 overflow-hidden">
+                    <div className="flex items-center gap-2.5 px-4 py-2.5">
+                      <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 ${groupColor(gi)}`}>
+                        {group.name.charAt(0)}
+                      </div>
+                      <span className="text-sm font-semibold text-gray-700">{group.name}</span>
+                      <span className="ml-auto text-xs text-gray-400">{granted.length}/{group.operations.length}</span>
+                    </div>
+                    <div className="px-4 pb-3 flex flex-wrap gap-1.5">
+                      {granted.map(op => (
+                        <span key={op.id} className="text-xs px-2.5 py-1 rounded-full bg-blue-600 text-white font-medium">
+                          ✓ {op.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="px-5 py-3.5 border-t border-gray-100 shrink-0">
+              <button
+                onClick={() => setViewRole(null)}
+                className="w-full border border-gray-200 text-gray-600 hover:bg-gray-50 font-semibold py-2.5 rounded-xl transition text-sm"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
