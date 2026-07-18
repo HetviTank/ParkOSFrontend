@@ -8,7 +8,7 @@ import {
   Truck as TruckIcon, User, MapPin, Clock, LogOut, LogIn, Receipt,
   ShieldX, Download, ChevronDown, ChevronUp, Pencil, Trash2, CheckCircle2, Eye,
   MoreVertical, ShieldCheck, ShieldAlert, IndianRupee, FileText,
-  ArrowRightLeft, Phone, Building2, TrendingUp, TrendingDown, PackageSearch,
+  Phone, Building2, TrendingUp, TrendingDown, PackageSearch,
   SlidersHorizontal, RotateCcw, StickyNote, Plus, History, Layers, Wallet, Timer,
   CalendarClock, Hash, ExternalLink,
 } from "lucide-react";
@@ -364,15 +364,6 @@ export default function AllTrucksPage() {
   const [editErr,        setEditErr]        = useState("");
   const [editOk,         setEditOk]         = useState(false);
 
-  // ── move slot ──
-  const [moveSession, setMoveSession] = useState<Enriched | null>(null);
-  const [moveSlots,   setMoveSlots]   = useState<SlotData[]>([]);
-  const [moveSlotId,  setMoveSlotId]  = useState("");
-  const [moveLoading, setMoveLoading] = useState(false);
-  const [moveBusy,    setMoveBusy]    = useState(false);
-  const [moveErr,     setMoveErr]     = useState("");
-  const [moveOk,      setMoveOk]      = useState(false);
-
   // ── delete ──
   const [deleteSession, setDeleteSession] = useState<Enriched | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -561,33 +552,6 @@ export default function AllTrucksPage() {
     } catch (err) {
       setEditErr(err instanceof Error ? err.message : "Failed to save.");
     } finally { setEditBusy(false); }
-  }
-
-  // ── move slot ──
-  async function openMoveSlot(s: Enriched) {
-    setMoveSession(s); setMoveSlotId(""); setMoveErr(""); setMoveOk(false); setMoveSlots([]);
-    setMenuId(null);
-    setMoveLoading(true);
-    try {
-      const res = await apiFetch<{ list: SlotData[] }>(`/slots?division_id=${s.division_id}&status=free&limit=200`);
-      setMoveSlots(res.list ?? []);
-    } catch { setMoveSlots([]); }
-    finally { setMoveLoading(false); }
-  }
-  async function handleMoveSlot() {
-    if (!moveSession || !moveSlotId) return;
-    setMoveBusy(true); setMoveErr(""); setMoveOk(false);
-    try {
-      const payload = buildUpdatePayload(moveSession, { slot_id: moveSlotId });
-      await apiFetch(`/parking-sessions/${moveSession.id}`, { method: "PUT", body: JSON.stringify(payload) });
-      setMoveOk(true);
-      const newCode = moveSlots.find(sl => sl.id === moveSlotId)?.code ?? "—";
-      sCache.current[moveSlotId] = { id: moveSlotId, code: newCode };
-      setSessions(prev => prev.map(s => s.id === moveSession.id ? { ...s, slot_id: moveSlotId, slotCode: newCode } : s));
-      setTimeout(() => setMoveSession(null), 900);
-    } catch (err) {
-      setMoveErr(err instanceof Error ? err.message : "Failed to move slot.");
-    } finally { setMoveBusy(false); }
   }
 
   // ── delete ──
@@ -898,7 +862,6 @@ export default function AllTrucksPage() {
                     onCloseMenu={() => setMenuId(null)}
                     onView={() => openDetails(s)}
                     onEdit={() => openEdit(s)}
-                    onMoveSlot={() => openMoveSlot(s)}
                     onReceipt={() => { setReceiptSession(s); setMenuId(null); }}
                     onDelete={() => { setDeleteSession(s); setMenuId(null); }}
                   />
@@ -982,62 +945,6 @@ export default function AllTrucksPage() {
         )}
       </Overlay>
 
-      {/* ── Move slot modal ── */}
-      <Overlay open={!!moveSession} onClose={() => setMoveSession(null)} variant="modal" title="Move Slot" widthClass="max-w-sm">
-        {moveSession && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 text-sm">
-              <span className="font-mono font-bold text-gray-900 dark:text-white">{moveSession.truckNumber}</span>
-              <span className="text-gray-400 dark:text-slate-500">·</span>
-              <span className="text-gray-500 dark:text-slate-400">currently in <span className="font-semibold text-gray-700 dark:text-slate-200">{moveSession.slotCode}</span></span>
-            </div>
-
-            {moveLoading ? (
-              <div className="flex items-center justify-center py-8 gap-2 text-gray-400 dark:text-slate-500">
-                <Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm">Loading free slots…</span>
-              </div>
-            ) : moveSlots.length === 0 ? (
-              <div className="text-center py-6">
-                <ArrowRightLeft className="w-7 h-7 text-gray-200 dark:text-slate-700 mx-auto mb-2" />
-                <p className="text-sm text-gray-400 dark:text-slate-500">No free slots in {moveSession.divisionName} right now.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-48 overflow-y-auto pr-1">
-                {moveSlots.map(sl => (
-                  <button key={sl.id} onClick={() => setMoveSlotId(sl.id)}
-                    className={`py-2 rounded-lg text-xs font-semibold border transition ${moveSlotId === sl.id
-                      ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
-                      : "bg-gray-50 dark:bg-slate-800/60 border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:border-indigo-300"}`}>
-                    {sl.code}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {moveErr && (
-              <div className="flex items-center gap-2 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/20 text-red-600 dark:text-red-300 text-xs px-3.5 py-2.5 rounded-xl">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0" />{moveErr}
-              </div>
-            )}
-            {moveOk && (
-              <div className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs px-3.5 py-2.5 rounded-xl">
-                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />Slot updated!
-              </div>
-            )}
-
-            <div className="flex gap-3">
-              <button onClick={() => setMoveSession(null)}
-                className="flex-1 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 font-semibold py-2.5 rounded-xl transition text-sm">
-                Cancel
-              </button>
-              <button onClick={handleMoveSlot} disabled={moveBusy || !moveSlotId}
-                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl transition text-sm flex items-center justify-center gap-2 disabled:opacity-50">
-                {moveBusy ? <><Loader2 className="w-4 h-4 animate-spin" />Moving…</> : "Confirm move"}
-              </button>
-            </div>
-          </div>
-        )}
-      </Overlay>
 
       {/* ── Receipt modal ── */}
       <Overlay open={!!receiptSession} onClose={() => setReceiptSession(null)} variant="modal" title="Receipt" widthClass="max-w-sm">
@@ -1142,13 +1049,12 @@ interface TruckRowProps {
   onCloseMenu: () => void;
   onView: () => void;
   onEdit: () => void;
-  onMoveSlot: () => void;
   onReceipt: () => void;
   onDelete: () => void;
 }
 function TruckRow({
   session: s, index, rules, expanded, onToggleExpand,
-  menuOpen, onToggleMenu, onCloseMenu, onView, onEdit, onMoveSlot, onReceipt, onDelete,
+  menuOpen, onToggleMenu, onCloseMenu, onView, onEdit, onReceipt, onDelete,
 }: TruckRowProps) {
   const key = deriveStatusKey(s);
   const priority = priorityFor(key, s, rules);
@@ -1301,7 +1207,6 @@ function TruckRow({
                 >
                   <MenuItem icon={<Eye className="w-3.5 h-3.5" />} label="View Details" onClick={onView} />
                   <MenuItem icon={<Pencil className="w-3.5 h-3.5" />} label="Edit" onClick={onEdit} />
-                  <MenuItem icon={<ArrowRightLeft className="w-3.5 h-3.5" />} label="Move Slot" onClick={onMoveSlot} disabled={!isActive} />
                   <MenuItem icon={<ShieldAlert className="w-3.5 h-3.5" />} label="Driver Verification" href="/dashboard/verification" disabled={s.driver_match !== "mismatch"} />
                   <MenuItem icon={<Receipt className="w-3.5 h-3.5" />} label="Generate Receipt" onClick={onReceipt} disabled={s.status !== "released"} />
                   <MenuItem icon={<ShieldX className="w-3.5 h-3.5" />} label="Force Checkout" href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`} disabled={!isActive} danger />
@@ -1360,8 +1265,7 @@ function TruckRow({
                   >
                     <MenuItem icon={<Eye className="w-3.5 h-3.5" />} label="View Details" onClick={onView} />
                     <MenuItem icon={<Pencil className="w-3.5 h-3.5" />} label="Edit" onClick={onEdit} />
-                    <MenuItem icon={<ArrowRightLeft className="w-3.5 h-3.5" />} label="Move Slot" onClick={onMoveSlot} disabled={!isActive} />
-                    <MenuItem icon={<ShieldAlert className="w-3.5 h-3.5" />} label="Driver Verification" href="/dashboard/verification" disabled={s.driver_match !== "mismatch"} />
+                      <MenuItem icon={<ShieldAlert className="w-3.5 h-3.5" />} label="Driver Verification" href="/dashboard/verification" disabled={s.driver_match !== "mismatch"} />
                     <MenuItem icon={<Receipt className="w-3.5 h-3.5" />} label="Generate Receipt" onClick={onReceipt} disabled={s.status !== "released"} />
                     <MenuItem icon={<ShieldX className="w-3.5 h-3.5" />} label="Force Checkout" href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`} disabled={!isActive} danger />
                     <div className="my-1 border-t border-gray-100 dark:border-slate-800" />

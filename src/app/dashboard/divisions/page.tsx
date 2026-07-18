@@ -2,13 +2,16 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { createPortal } from "react-dom";
+import { motion, AnimatePresence } from "motion/react";
 import {
-  ChevronRight, ChevronDown, Plus, X, Loader2, AlertCircle,
+  ChevronRight, ChevronDown, Plus, X, Loader2, AlertCircle, Check,
   CheckCircle2, Layers, Save, Truck, Zap, Percent, IndianRupee, Timer,
 } from "lucide-react";
 
 import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
 import { LocationSelect } from "@/components/ui/LocationSelect";
+import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -81,6 +84,113 @@ function truckLabel(t: string): string {
   if (t === "medium") return "Medium trucks (10–20T)";
   if (t === "light")  return "Light trucks (<10T)";
   return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+// Truck-type filter options for the "new division" form — reuses each type's
+// avatar gradient's base color as a dot, matching the card it will create.
+const TRUCK_TYPE_FILTER_OPTIONS = TRUCK_TYPES.map(t => ({
+  value: t,
+  label: truckLabel(t),
+  dot: t === "heavy" ? "bg-violet-500" : t === "medium" ? "bg-teal-500" : "bg-emerald-500",
+}));
+
+const DIVISION_STATUS_OPTIONS = ["active", "draft", "inactive"];
+
+// A per-row inline status editor styled as a colored pill matching the
+// division's own status/truck-type theme — a bespoke variant of the shared
+// EnumFilterSelect pattern, since its trigger needs dynamic per-row colors
+// that the shared component's fixed indigo styling can't express.
+function DivisionStatusSelect({ value, onChange, ringClass }: { value: string; onChange: (v: string) => void; ringClass: string }) {
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const st = statusStyle(value);
+
+  function openDropdown() {
+    if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+    setOpen(true);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function reposition() { if (btnRef.current) setRect(btnRef.current.getBoundingClientRect()); }
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => { window.removeEventListener("scroll", reposition, true); window.removeEventListener("resize", reposition); };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (
+        panelRef.current && !panelRef.current.contains(e.target as Node) &&
+        btnRef.current && !btnRef.current.contains(e.target as Node)
+      ) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") setOpen(false); }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+
+  const estimatedPanelHeight = DIVISION_STATUS_OPTIONS.length * 42 + 16;
+  const openUp = rect ? rect.bottom + estimatedPanelHeight > window.innerHeight && rect.top > window.innerHeight - rect.bottom : false;
+  const panelStyle: React.CSSProperties = rect ? {
+    position: "fixed", left: rect.left, width: Math.max(rect.width, 150), zIndex: 10000,
+    ...(openUp ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }),
+  } : { display: "none" };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => open ? setOpen(false) : openDropdown()}
+        className={`flex items-center gap-1.5 pl-2.5 pr-2 py-1.5 text-xs font-bold rounded-full border border-transparent focus:outline-none focus:ring-2 ${ringClass} ${st.bg} ${st.text} transition`}
+      >
+        <span className={`w-2 h-2 rounded-full shrink-0 ${st.dot}`} />
+        {value.charAt(0).toUpperCase() + value.slice(1)}
+        <ChevronDown className={`w-3 h-3 opacity-60 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && typeof window !== "undefined" && createPortal(
+        <AnimatePresence>
+          <motion.div
+            ref={panelRef}
+            style={panelStyle}
+            initial={{ opacity: 0, y: openUp ? 6 : -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: openUp ? 6 : -6, scale: 0.98 }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+            className="bg-white rounded-2xl border border-gray-200 shadow-2xl shadow-gray-300/40 overflow-hidden"
+          >
+            <ul className="py-1.5">
+              {DIVISION_STATUS_OPTIONS.map(s => {
+                const isSel = s === value;
+                const os = statusStyle(s);
+                return (
+                  <li key={s}>
+                    <button
+                      type="button"
+                      onClick={() => { onChange(s); setOpen(false); }}
+                      className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-sm font-semibold transition ${isSel ? "bg-gray-50" : "hover:bg-gray-50"}`}
+                    >
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${os.dot}`} />
+                      <span className="flex-1 text-gray-700">{s.charAt(0).toUpperCase() + s.slice(1)}</span>
+                      {isSel && <Check className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </motion.div>
+        </AnimatePresence>,
+        document.body
+      )}
+    </>
+  );
 }
 
 const ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -389,13 +499,12 @@ export default function DivisionsPage() {
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Truck type <span className="text-red-400">*</span></label>
-                <div className="relative">
-                  <select value={newType} onChange={e => setNewType(e.target.value)}
-                    className="w-full appearance-none px-3.5 py-3 text-sm font-semibold text-gray-900 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition shadow-sm pr-9 cursor-pointer">
-                    {TRUCK_TYPES.map(t => <option key={t} value={t}>{truckLabel(t)}</option>)}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                </div>
+                <EnumFilterSelect
+                  className="w-full"
+                  value={newType}
+                  onChange={setNewType}
+                  options={TRUCK_TYPE_FILTER_OPTIONS}
+                />
               </div>
             </div>
 
@@ -501,7 +610,6 @@ export default function DivisionsPage() {
 
           {divisions.map((div, idx) => {
             const style = divStyle(div.truck_type);
-            const st    = statusStyle(edits[div.id]?.status ?? div.status);
             const occ   = occMap[div.id];
             const occupied   = occ?.occupied_slots ?? 0;
             const total      = Number(edits[div.id]?.slots ?? div.total_slots);
@@ -543,18 +651,11 @@ export default function DivisionsPage() {
 
                   {/* status badge + selector */}
                   <div className="shrink-0">
-                    <div className="relative">
-                      <select value={e.status}
-                        onChange={ev => setField(div.id, "status", ev.target.value)}
-                        className={`appearance-none pl-7 pr-7 py-1.5 text-xs font-bold rounded-full border cursor-pointer focus:outline-none focus:ring-2 ${style.ring} transition ${st.bg} ${st.text} border border-opacity-50`}
-                        style={{ borderColor: "transparent" }}>
-                        <option value="active">Active</option>
-                        <option value="draft">Draft</option>
-                        <option value="inactive">Inactive</option>
-                      </select>
-                      <span className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full ${st.dot}`} />
-                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 pointer-events-none opacity-60" />
-                    </div>
+                    <DivisionStatusSelect
+                      value={e.status}
+                      onChange={v => setField(div.id, "status", v)}
+                      ringClass={style.ring}
+                    />
                   </div>
                 </div>
 

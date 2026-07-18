@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { handleUnauthorized, isAdminRole } from "@/lib/auth";
+import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -674,10 +675,6 @@ export default function CheckInPage() {
                 </div>
               </div>
             </FormCard>
-          </div>
-
-          {/* ── LOCATION · RATE · TIME · SUBMIT (mobile: 2nd · desktop: right col) ── */}
-          <div className="order-2 lg:col-span-2 lg:row-span-2 space-y-4">
 
             {/* Driver card */}
             <FormCard
@@ -722,6 +719,10 @@ export default function CheckInPage() {
                 />
               </div>
             </FormCard>
+          </div>
+
+          {/* ── LOCATION · RATE · TIME · SUBMIT (mobile: 2nd · desktop: right col) ── */}
+          <div className="order-2 lg:col-span-2 lg:row-span-2 space-y-4">
 
             {/* Location & Slot card */}
             <FormCard

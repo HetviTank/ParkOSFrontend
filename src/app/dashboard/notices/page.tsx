@@ -46,7 +46,7 @@ interface Notice {
   truck_number?: string; owner_name?: string; owner_mobile?: string; created_by_name?: string;
 }
 interface AlertType { id: string; name: string | null; code: string; description: string | null }
-interface TruckObj  { id: string; truck_number: string; truck_type: string | null }
+interface TruckObj  { id: string; truck_number: string; truck_type: string | null; owner_id?: string | null }
 interface Owner     { id: string; name: string; primary_mobile: string }
 interface AdminUser { id: string; name: string }
 interface Session   { id: string; truck_id: string | null; owner_id: string | null }
@@ -543,27 +543,39 @@ export default function NoticesPage() {
       )
     );
 
-    // Step 2: resolve effective truck/owner IDs (notice direct or via session fallback)
-    const effectiveIds = notices.map(n => {
+    // Step 2: resolve effective truck IDs (notice direct or via session fallback), then fetch trucks —
+    // needed before owner resolution, since most notices only carry truck_id and rely on the
+    // truck's own registered owner (not every notice sets owner_id/session_id directly).
+    const effectiveTruckIds = notices.map(n => {
       const sess = n.session_id ? sessionCache.current[n.session_id] : undefined;
-      return {
-        truckId: n.truck_id ?? sess?.truck_id ?? null,
-        ownerId: n.owner_id ?? sess?.owner_id ?? null,
-      };
+      return n.truck_id ?? sess?.truck_id ?? null;
     });
 
-    const truckIds = [...new Set(effectiveIds.map(e => e.truckId).filter(Boolean) as string[])].filter(id => !truckCache.current[id]);
-    const ownerIds = [...new Set(effectiveIds.map(e => e.ownerId).filter(Boolean) as string[])].filter(id => !ownerCache.current[id]);
+    const truckIds = [...new Set(effectiveTruckIds.filter(Boolean) as string[])].filter(id => !truckCache.current[id]);
+    await Promise.allSettled(
+      truckIds.map(id => apiFetch<TruckObj>(`/trucks/${id}`).then(t => { truckCache.current[id] = t; }).catch(() => {}))
+    );
+
+    // Step 3: resolve effective owner IDs — notice direct, else session's owner, else the
+    // truck's own registered owner.
+    const effectiveOwnerIds = notices.map((n, i) => {
+      const sess = n.session_id ? sessionCache.current[n.session_id] : undefined;
+      const truckId = effectiveTruckIds[i];
+      const truck = truckId ? truckCache.current[truckId] : undefined;
+      return n.owner_id ?? sess?.owner_id ?? truck?.owner_id ?? null;
+    });
+
+    const ownerIds = [...new Set(effectiveOwnerIds.filter(Boolean) as string[])].filter(id => !ownerCache.current[id]);
     const adminIds = [...new Set(notices.map(n => n.created_by).filter(Boolean) as string[])].filter(id => !adminCache.current[id]);
 
     await Promise.allSettled([
-      ...truckIds.map(id => apiFetch<TruckObj>(`/trucks/${id}`).then(t => { truckCache.current[id] = t; }).catch(() => {})),
       ...ownerIds.map(id => apiFetch<Owner>(`/owners/${id}`).then(o => { ownerCache.current[id] = o; }).catch(() => {})),
       ...adminIds.map(id => apiFetch<AdminUser>(`/admin-users/${id}`).then(a => { adminCache.current[id] = a.name; }).catch(() => {})),
     ]);
 
     return notices.map((n, i) => {
-      const { truckId, ownerId } = effectiveIds[i];
+      const truckId = effectiveTruckIds[i];
+      const ownerId = effectiveOwnerIds[i];
       return {
         ...n,
         truck_number:    truckId ? (truckCache.current[truckId]?.truck_number ?? n.truck_number) : n.truck_number,

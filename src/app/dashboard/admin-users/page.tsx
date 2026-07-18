@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { handleUnauthorized } from "@/lib/auth";
+import { LocationSelect } from "@/components/ui/LocationSelect";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -520,10 +521,14 @@ export default function AdminUsersPage() {
                 </div>
               </Field>
               <Field label="Location" hint="Leave empty to allow access to all locations.">
-                <select value={fLocationId} onChange={e => setFLocationId(e.target.value)} className={selectCls}>
-                  <option value="">All locations (no restriction)</option>
-                  {locations.map(l => <option key={l.id} value={l.id}>{l.name}{l.city ? ` — ${l.city}` : ""}</option>)}
-                </select>
+                <LocationSelect
+                  value={fLocationId}
+                  onChange={setFLocationId}
+                  locations={locations}
+                  allowAll
+                  allLabel="All locations (no restriction)"
+                  className="w-full"
+                />
               </Field>
               {fError && <ErrorBanner>{fError}</ErrorBanner>}
             </form>
@@ -625,4 +630,3 @@ function PagBtn({ disabled, onClick, children }: { disabled: boolean; onClick: (
 
 const thCls    = "px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-widest";
 const inputCls = "w-full px-3.5 py-2.5 text-sm text-gray-900 bg-gray-50 border border-gray-200 rounded-xl placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition";
-const selectCls = "w-full px-3.5 py-2.5 text-sm text-gray-900 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition appearance-none cursor-pointer";

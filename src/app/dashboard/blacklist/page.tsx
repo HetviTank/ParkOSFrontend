@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
   ChevronRight, ChevronLeft, ChevronUp, ChevronDown, Search, X, Loader2, AlertCircle,
@@ -1014,20 +1015,66 @@ interface RowProps {
   onView: () => void; onEdit: () => void; onToggleActive: () => void; onRemove: () => void;
 }
 function BlacklistRow({ item, index, highlighted, menuOpen, onToggleMenu, onCloseMenu, onView, onEdit, onToggleActive, onRemove }: RowProps) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const mobileMenuRef = useRef<HTMLDivElement>(null);
+  // Portal-positioned (fixed) row menu — escapes the table card's own
+  // overflow-hidden clipping, which otherwise cut the panel off whenever a
+  // row sat near the bottom of a short table (e.g. a single-row list).
+  const desktopBtnRef = useRef<HTMLButtonElement>(null);
+  const mobileBtnRef  = useRef<HTMLButtonElement>(null);
+  const panelRef      = useRef<HTMLDivElement>(null);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+
+  function openFrom(ref: React.RefObject<HTMLButtonElement | null>) {
+    if (!menuOpen && ref.current) setRect(ref.current.getBoundingClientRect());
+    onToggleMenu();
+  }
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function reposition() {
+      const ref = desktopBtnRef.current?.offsetParent ? desktopBtnRef : mobileBtnRef;
+      if (ref.current) setRect(ref.current.getBoundingClientRect());
+    }
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => { window.removeEventListener("scroll", reposition, true); window.removeEventListener("resize", reposition); };
+  }, [menuOpen]);
 
   useEffect(() => {
     if (!menuOpen) return;
     function onDocClick(e: MouseEvent) {
       const target = e.target as Node;
-      const insideDesktop = menuRef.current?.contains(target);
-      const insideMobile = mobileMenuRef.current?.contains(target);
-      if (!insideDesktop && !insideMobile) onCloseMenu();
+      const insideDesktop = desktopBtnRef.current?.contains(target);
+      const insideMobile = mobileBtnRef.current?.contains(target);
+      const insidePanel = panelRef.current?.contains(target);
+      if (!insideDesktop && !insideMobile && !insidePanel) onCloseMenu();
     }
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") onCloseMenu(); }
     document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDocClick); document.removeEventListener("keydown", onKey); };
   }, [menuOpen, onCloseMenu]);
+
+  // Compute panel position clamped within the viewport on every render so it
+  // stays correct after scroll / resize events update `rect`.
+  const PANEL_W = 208; // w-52
+  const PANEL_H = 170; // estimated menu height (4 items + divider)
+  const panelStyle: React.CSSProperties = rect ? (() => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    // Right-align to button edge, but clamp so the panel never overflows either side.
+    const rawLeft = rect.right - PANEL_W;
+    const left = Math.max(8, Math.min(rawLeft, vw - PANEL_W - 8));
+    // Open upward when there isn't enough space below.
+    const openUp = rect.bottom + PANEL_H + 8 > vh && rect.top > PANEL_H + 8;
+    return {
+      position: "fixed" as const,
+      left,
+      zIndex: 10000,
+      ...(openUp
+        ? { bottom: vh - rect.top + 6 }
+        : { top: rect.bottom + 6 }),
+    };
+  })() : { display: "none" };
 
   const statusMeta = item.is_active
     ? { label: "Active", dot: "bg-red-500", chip: "bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/20" }
@@ -1110,60 +1157,76 @@ function BlacklistRow({ item, index, highlighted, menuOpen, onToggleMenu, onClos
           <button onClick={onView} className="p-2 text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition">
             <Eye className="w-3.5 h-3.5" />
           </button>
-          <div className="relative" ref={menuRef}>
-            <button onClick={onToggleMenu} className="p-2 text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition">
-              <MoreVertical className="w-4 h-4" />
-            </button>
-            <AnimatePresence>
-              {menuOpen && (
-                <motion.div initial={{ opacity: 0, scale: 0.95, y: -4 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: -4 }} transition={{ duration: 0.12 }}
-                  className="absolute right-0 top-full mt-1 w-52 bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl shadow-xl z-20 py-1.5 overflow-hidden">
-                  {menuContent}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+          <button ref={desktopBtnRef} onClick={() => openFrom(desktopBtnRef)} className="p-2 text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition">
+            <MoreVertical className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
       {/* Mobile card */}
-      <div className="md:hidden flex flex-col gap-3 px-4 py-4 pl-5">
+      <div className="md:hidden flex flex-col px-4 py-4 pl-5 gap-2.5">
+        {/* Row 1: truck + status */}
         <div className="flex items-center justify-between gap-2">
-          <p className="text-sm font-bold font-mono text-gray-900 dark:text-white flex items-center gap-1.5">
+          <p className="text-sm font-bold font-mono text-gray-900 dark:text-white flex items-center gap-1.5 truncate">
             <ShieldX className="w-3.5 h-3.5 text-red-400 shrink-0" />{item.truck_number}
           </p>
-          <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${statusMeta.chip}`}>
+          <span className={`shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${statusMeta.chip}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${statusMeta.dot}`} />{statusMeta.label}
           </span>
         </div>
+
+        {/* Row 2: owner */}
         {item.ownerName && (
           <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
-            <User className="w-3.5 h-3.5 text-gray-300 dark:text-slate-600 shrink-0" />{item.ownerName}
+            <User className="w-3.5 h-3.5 text-gray-300 dark:text-slate-600 shrink-0" />
+            <span className="truncate">{item.ownerName}{item.ownerMobile ? ` · ${item.ownerMobile}` : ""}</span>
           </div>
         )}
-        <p className="text-sm text-gray-700 dark:text-slate-300">{item.reason}</p>
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs text-gray-400 dark:text-slate-500">Added {fmtDate(item.created_at)} · {item.addedByName}</p>
-          <div className="flex items-center gap-1">
-            <button onClick={onView} className="min-w-11 min-h-11 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition">
+
+        {/* Row 3: reason */}
+        <p className="text-sm text-gray-700 dark:text-slate-300 line-clamp-2">{item.reason}</p>
+
+        {/* Row 4: date + actions */}
+        <div className="flex items-center justify-between gap-2 pt-0.5 border-t border-gray-100 dark:border-slate-800">
+          <p className="text-xs text-gray-400 dark:text-slate-500 truncate">
+            {fmtDate(item.created_at)} · {item.addedByName}
+          </p>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button
+              onClick={onView}
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition"
+              title="View details"
+            >
               <Eye className="w-4 h-4" />
             </button>
-            <div className="relative" ref={mobileMenuRef}>
-              <button onClick={onToggleMenu} className="min-w-11 min-h-11 flex items-center justify-center text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition">
-                <MoreVertical className="w-4 h-4" />
-              </button>
-              <AnimatePresence>
-                {menuOpen && (
-                  <motion.div initial={{ opacity: 0, scale: 0.95, y: -4 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: -4 }} transition={{ duration: 0.12 }}
-                    className="absolute right-0 bottom-full mb-1 w-52 bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl shadow-xl z-20 py-1.5 overflow-hidden">
-                    {menuContent}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
+            <button
+              ref={mobileBtnRef}
+              onClick={() => openFrom(mobileBtnRef)}
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-xl transition"
+              title="More options"
+            >
+              <MoreVertical className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>
+
+      {menuOpen && typeof window !== "undefined" && createPortal(
+        <AnimatePresence>
+          <motion.div
+            ref={panelRef}
+            style={panelStyle}
+            initial={{ opacity: 0, scale: 0.95, y: -4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: -4 }}
+            transition={{ duration: 0.12 }}
+            className="w-52 bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl shadow-xl overflow-hidden py-1.5"
+          >
+            {menuContent}
+          </motion.div>
+        </AnimatePresence>,
+        document.body
+      )}
     </motion.div>
   );
 }

@@ -3,13 +3,19 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { motion } from "motion/react";
 import {
-  ChevronRight, ChevronDown, Download, AlertCircle,
-  Truck, Clock, Activity, AlertTriangle, TrendingUp, MapPin,
+  ChevronRight, Download, AlertCircle, RefreshCw,
+  Truck, Clock, Activity, AlertTriangle, TrendingUp, TrendingDown, MapPin,
+  Wallet, Layers, PackageSearch, LogIn, Crown, Sparkles,
 } from "lucide-react";
 
 import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
 import { LocationSelect } from "@/components/ui/LocationSelect";
+import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
+import { GlassCard } from "@/components/ui/GlassCard";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { Sparkline } from "@/components/ui/Sparkline";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -32,19 +38,27 @@ async function apiFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// ── types ─────────────────────────────────────────────────────────────────────
-interface Location   { id: string; name: string; city: string | null }
-interface DashKPIs   { total_slots: number; occupied_slots: number; occupancy_percent: number; today_checkins: number; today_revenue: number; yesterday_revenue?: number; revenue_growth_percent: number }
-interface DivOcc     { division_id: string; division_name: string; truck_type: string; total_slots: number; occupied_slots: number; occupancy_percent: number }
-interface WeekRev    { date: string; day: string; cash: number; card_upi: number; total: number }
-interface PaySplit   { cash_percent: number; card_upi_percent: number; total_cash: number; total_card_upi: number }
-interface DashResp   { kpis: DashKPIs; division_occupancy: DivOcc[]; weekly_revenue: WeekRev[]; payment_split: PaySplit }
-interface Session    { id: string; truck_id: string; location_id: string; days: number | null; total_amount: number | null; driver_match: string | null; check_out_time: string | null; created_at: string | null }
-interface TruckObj   { id: string; truck_number: string; truck_type: string | null }
+// ── types (mirror the real /dashboard, /parking-sessions, /trucks payloads) ────
+interface Location { id: string; name: string; city: string | null }
+interface DashKPIs {
+  total_slots: number; occupied_slots: number; occupancy_percent: number;
+  today_checkins: number; yesterday_checkins?: number; checkins_diff?: number;
+  today_revenue: number; yesterday_revenue?: number; revenue_growth_percent: number;
+}
+interface DivOcc { division_id: string; division_name: string; truck_type: string; total_slots: number; occupied_slots: number; occupancy_percent: number }
+interface WeekRev { date: string; day: string; cash: number; card_upi: number; total: number }
+interface PaySplit { cash_percent: number; card_upi_percent: number; total_cash: number; total_card_upi: number }
+interface DashResp { kpis: DashKPIs; division_occupancy: DivOcc[]; weekly_revenue: WeekRev[]; payment_split: PaySplit }
+interface Session {
+  id: string; truck_id: string; location_id: string; days: number | null; total_amount: number | null;
+  driver_match: string | null; status: string; check_out_time: string | null; created_at: string | null;
+}
+interface TruckObj { id: string; truck_number: string; truck_type: string | null }
 
 // ── utils ─────────────────────────────────────────────────────────────────────
 function fmtRupees(n: number) { return `₹${n.toLocaleString("en-IN")}`; }
 function fmtShort(n: number)  { if (n >= 100000) return `₹${(n/100000).toFixed(1)}L`; if (n >= 1000) return `₹${(n/1000).toFixed(0)}k`; return fmtRupees(n); }
+function fmtInt(n: number)    { return n.toLocaleString("en-IN"); }
 
 function monthOptions(): { label: string; year: number; month: number }[] {
   const now = new Date(); const opts = [];
@@ -54,99 +68,267 @@ function monthOptions(): { label: string; year: number; month: number }[] {
   }
   return opts;
 }
-
 function inMonth(iso: string | null, y: number, m: number) {
   if (!iso) return false;
   const d = new Date(iso);
   return d.getFullYear() === y && d.getMonth() === m;
 }
-
-// ── Donut chart ────────────────────────────────────────────────────────────────
-function DonutChart({ segments }: { segments: { label: string; pct: number; color: string }[] }) {
-  const r = 60; const cx = 80; const cy = 80;
-  const circ = 2 * Math.PI * r;
-  let offset = 0;
-  const paths = segments.filter(s => s.pct > 0).map(s => {
-    const dash = (s.pct / 100) * circ;
-    const gap  = circ - dash;
-    const el = (
-      <circle key={s.label} cx={cx} cy={cy} r={r}
-        fill="none" stroke={s.color} strokeWidth={22}
-        strokeDasharray={`${dash} ${gap}`}
-        strokeDashoffset={-offset}
-        transform={`rotate(-90 ${cx} ${cy})`}
-        style={{ transition: "stroke-dasharray 0.6s ease" }}
-      />
-    );
-    offset += dash;
-    return el;
+function monthlySeries(sessions: Session[], monthsBack: number, reducer: (subset: Session[]) => number) {
+  const now = new Date();
+  return Array.from({ length: monthsBack }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (monthsBack - 1 - i), 1);
+    const subset = sessions.filter(s => inMonth(s.check_out_time ?? s.created_at, d.getFullYear(), d.getMonth()));
+    return { label: d.toLocaleDateString("en-IN", { month: "short" }), value: reducer(subset) };
   });
+}
+function occColor(pct: number) { return pct >= 90 ? "#ef4444" : pct >= 70 ? "#f59e0b" : "#10b981"; }
+function occBarClass(pct: number) { return pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500"; }
+
+interface Badge { text: string; good: boolean }
+function pctBadge(curr: number, prev: number, invert = false, suffix = "vs last month"): Badge | null {
+  if (!prev) return null;
+  const delta = Math.round(((curr - prev) / prev) * 100);
+  const good = invert ? delta <= 0 : delta >= 0;
+  return { text: `${delta > 0 ? "+" : ""}${delta}% ${suffix}`, good };
+}
+function countBadge(diff: number | undefined, invert = false, suffix = "vs yesterday"): Badge | null {
+  if (diff == null) return null;
+  const good = invert ? diff <= 0 : diff >= 0;
+  return { text: `${diff > 0 ? "+" : ""}${diff} ${suffix}`, good };
+}
+
+// ── count-up animated number (shared convention across the dashboard) ─────────
+function useCountUp(target: number, duration = 800) {
+  const [val, setVal] = useState(0);
+  useEffect(() => {
+    const from = 0;
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setVal(from + (target - from) * eased);
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration]);
+  return val;
+}
+function AnimatedNumber({ value, format }: { value: number; format?: (n: number) => string }) {
+  const v = useCountUp(value);
+  return <>{format ? format(v) : Math.round(v)}</>;
+}
+
+function RatioRing({ percent, color, size = 84, stroke = 9 }: { percent: number; color: string; size?: number; stroke?: number }) {
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r;
+  const dash = (c * Math.min(Math.max(percent, 0), 100)) / 100;
   return (
-    <svg width={160} height={160} viewBox="0 0 160 160">
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#f1f5f9" strokeWidth={22} />
-      {paths}
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90 shrink-0">
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-gray-100 dark:stroke-slate-800" />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} strokeLinecap="round" stroke={color}
+        strokeDasharray={`${dash} ${c - dash}`} style={{ transition: "stroke-dasharray 0.8s ease" }} />
     </svg>
   );
 }
 
-// ── CSS Bar chart ──────────────────────────────────────────────────────────────
-function BarChart({ bars, color = "#4f46e5" }: { bars: { label: string; value: number }[]; color?: string }) {
+// ── KPI card ──────────────────────────────────────────────────────────────────
+function KPICard({ label, value, format, icon, iconBg, delay = 0, sub, subColor = "text-gray-400 dark:text-slate-500", sparklineData, sparklineColor, badge }: {
+  label: string; value: number; format?: (n: number) => string;
+  icon: React.ReactNode; iconBg: string; delay?: number;
+  sub?: string; subColor?: string;
+  sparklineData?: number[]; sparklineColor?: string;
+  badge?: Badge | null;
+}) {
+  return (
+    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay, ease: "easeOut" }} whileHover={{ scale: 1.02 }}
+      className="rounded-3xl transition-shadow duration-300 hover:shadow-xl">
+      <GlassCard gradientBorder className="p-4 group h-full">
+        <div className="flex items-start justify-between mb-2.5">
+          <p className="text-xs font-medium text-gray-500 dark:text-slate-400 leading-tight">{label}</p>
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${iconBg} transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6`}>{icon}</div>
+        </div>
+        <div className="flex items-end justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight tabular-nums truncate">
+              <AnimatedNumber value={value} format={format} />
+            </p>
+            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+              {sub && <p className={`text-xs font-medium truncate ${subColor}`}>{sub}</p>}
+              {badge && (
+                <span className={`inline-flex items-center gap-0.5 text-[11px] font-bold px-1.5 py-0.5 rounded-full ${badge.good ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400" : "bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400"}`}>
+                  {badge.good ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                  {badge.text}
+                </span>
+              )}
+            </div>
+          </div>
+          {sparklineData && sparklineData.some(v => v > 0) && (
+            <div className="hidden sm:block shrink-0">
+              <Sparkline data={sparklineData} stroke={sparklineColor} width={56} height={28} />
+            </div>
+          )}
+        </div>
+      </GlassCard>
+    </motion.div>
+  );
+}
+
+// ── donut chart — interactive, with a center metric ────────────────────────────
+function DonutChart({ segments, centerValue, centerLabel }: { segments: { label: string; pct: number; color: string }[]; centerValue: string; centerLabel: string }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const r = 62, cx = 90, cy = 90, circ = 2 * Math.PI * r;
+  const visible = segments.filter(s => s.pct > 0);
+  const withOffsets = visible.reduce<{ seg: typeof visible[number]; dash: number; offset: number }[]>((acc, seg) => {
+    const dash = (seg.pct / 100) * circ;
+    const prev = acc[acc.length - 1];
+    const offset = prev ? prev.offset + prev.dash : 0;
+    return [...acc, { seg, dash, offset }];
+  }, []);
+  const paths = withOffsets.map(({ seg, dash, offset }, i) => (
+    <circle key={seg.label} cx={cx} cy={cy} r={r} fill="none" stroke={seg.color} strokeWidth={hover === i ? 26 : 22}
+      strokeDasharray={`${dash} ${circ - dash}`} strokeDashoffset={-offset} transform={`rotate(-90 ${cx} ${cy})`}
+      style={{ transition: "all 0.25s ease", opacity: hover === null || hover === i ? 1 : 0.4, cursor: "pointer" }}
+      onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
+    />
+  ));
+  const hovered = hover != null ? visible[hover] : null;
+  return (
+    <div className="relative shrink-0" style={{ width: 180, height: 180 }}>
+      <svg width={180} height={180} viewBox="0 0 180 180">
+        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={22} className="stroke-gray-100 dark:stroke-slate-800" />
+        {paths}
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+        {hovered ? (
+          <>
+            <p className="text-xl font-bold text-gray-900 dark:text-white">{hovered.pct}%</p>
+            <p className="text-[11px] text-gray-400 dark:text-slate-500 font-medium truncate max-w-[110px]">{hovered.label}</p>
+          </>
+        ) : (
+          <>
+            <p className="text-2xl font-bold text-gray-900 dark:text-white">{centerValue}</p>
+            <p className="text-[11px] text-gray-400 dark:text-slate-500 font-medium">{centerLabel}</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── bar chart — hover tooltips, highlights the latest bar ─────────────────────
+function BarChart({ bars, color, valueFormat = fmtShort }: { bars: { label: string; value: number }[]; color: string; valueFormat?: (n: number) => string }) {
+  const [hover, setHover] = useState<number | null>(null);
   const max = Math.max(...bars.map(b => b.value), 1);
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => Math.round(max * f));
   return (
-    <div className="flex gap-3 h-48">
-      {/* y-axis */}
+    <div className="flex gap-3 h-52">
       <div className="flex flex-col-reverse justify-between pb-6 pr-1 shrink-0">
-        {yTicks.map((t, i) => (
-          <span key={i} className="text-[10px] text-gray-400 leading-none text-right w-10">{fmtShort(t)}</span>
-        ))}
+        {yTicks.map((t, i) => <span key={i} className="text-[10px] text-gray-400 dark:text-slate-500 leading-none text-right w-10">{valueFormat(t)}</span>)}
       </div>
-      {/* bars */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0">
         <div className="flex-1 relative">
-          {/* grid lines */}
-          {[0,1,2,3,4].map(i => (
-            <div key={i} className="absolute w-full border-t border-gray-100" style={{ bottom: `${i * 25}%` }} />
-          ))}
-          {/* bars row */}
+          {[0, 1, 2, 3, 4].map(i => <div key={i} className="absolute w-full border-t border-gray-100 dark:border-slate-800" style={{ bottom: `${i * 25}%` }} />)}
           <div className="absolute inset-0 flex items-end gap-1.5 px-1">
             {bars.map((b, i) => (
-              <div key={b.label} className="flex-1 flex flex-col items-center gap-0.5 h-full justify-end">
-                <div className="w-full rounded-t-lg transition-all duration-700"
-                  style={{ height: `${max > 0 ? (b.value / max) * 100 : 0}%`, background: i === bars.length - 1 ? `${color}80` : color, minHeight: b.value > 0 ? 4 : 0 }}
-                />
+              <div key={b.label} className="flex-1 relative flex flex-col items-center gap-0.5 h-full justify-end"
+                onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+                {hover === i && (
+                  <div className="absolute -top-8 bg-gray-900 dark:bg-slate-700 text-white text-[10px] font-bold px-2 py-1 rounded-lg whitespace-nowrap z-10 shadow-lg">
+                    {valueFormat(b.value)}
+                  </div>
+                )}
+                <div className="w-full rounded-t-lg transition-all duration-700 cursor-pointer"
+                  style={{ height: `${max > 0 ? (b.value / max) * 100 : 0}%`, background: color, minHeight: b.value > 0 ? 4 : 0, opacity: hover === null || hover === i ? 1 : 0.55 }} />
               </div>
             ))}
           </div>
         </div>
-        {/* x labels */}
         <div className="flex gap-1.5 px-1 h-6 items-center">
-          {bars.map(b => (
-            <div key={b.label} className="flex-1 text-center text-[10px] text-gray-400 truncate">{b.label}</div>
-          ))}
+          {bars.map((b, i) => <div key={b.label} className={`flex-1 text-center text-[10px] truncate ${i === bars.length - 1 ? "font-bold text-gray-600 dark:text-slate-300" : "text-gray-400 dark:text-slate-500"}`}>{b.label}</div>)}
         </div>
       </div>
     </div>
   );
 }
 
-const selectCls = "appearance-none bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition pr-10 shadow-sm w-full";
+// ── weekly activity chart — cash vs card/UPI stacked bars, last 7 days ────────
+function WeeklyActivityChart({ data }: { data: WeekRev[] }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const max = Math.max(...data.map(d => d.total), 1);
+  return (
+    <div className="h-52 flex flex-col">
+      <div className="flex-1 relative">
+        {[0, 1, 2, 3, 4].map(i => <div key={i} className="absolute w-full border-t border-gray-100 dark:border-slate-800" style={{ bottom: `${i * 25}%` }} />)}
+        <div className="absolute inset-0 flex items-end gap-2 px-1">
+          {data.map((d, i) => (
+            <div key={d.date} className="flex-1 relative flex flex-col items-stretch justify-end h-full"
+              onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+              {hover === i && (
+                <div className="absolute -top-16 left-1/2 -translate-x-1/2 bg-gray-900 dark:bg-slate-700 text-white text-[10px] rounded-lg px-2.5 py-1.5 z-10 shadow-lg whitespace-nowrap space-y-0.5">
+                  <p className="font-bold">{fmtShort(d.total)} total</p>
+                  <p className="text-emerald-300">Cash · {fmtShort(d.cash)}</p>
+                  <p className="text-blue-300">Card/UPI · {fmtShort(d.card_upi)}</p>
+                </div>
+              )}
+              <div className="w-full flex flex-col justify-end rounded-t-lg overflow-hidden cursor-pointer transition-all duration-700"
+                style={{ height: `${max > 0 ? (d.total / max) * 100 : 0}%`, minHeight: d.total > 0 ? 4 : 0, opacity: hover === null || hover === i ? 1 : 0.55 }}>
+                <div className="w-full bg-blue-500" style={{ height: d.total > 0 ? `${(d.card_upi / d.total) * 100}%` : "0%" }} />
+                <div className="w-full bg-emerald-500" style={{ height: d.total > 0 ? `${(d.cash / d.total) * 100}%` : "0%" }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="flex gap-2 px-1 h-6 items-center">
+        {data.map((d, i) => <div key={d.date} className={`flex-1 text-center text-[10px] truncate ${i === data.length - 1 ? "font-bold text-gray-600 dark:text-slate-300" : "text-gray-400 dark:text-slate-500"}`}>{d.day}</div>)}
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[11px] font-medium text-gray-400 dark:text-slate-500 truncate">{label}</p>
+      <p className="text-sm font-bold text-gray-800 dark:text-slate-200 truncate">{value}</p>
+    </div>
+  );
+}
+
+function EmptyState({ icon, text }: { icon: React.ReactNode; text: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-10 text-center gap-2">
+      <div className="text-gray-300 dark:text-slate-700">{icon}</div>
+      <p className="text-sm text-gray-400 dark:text-slate-500">{text}</p>
+    </div>
+  );
+}
+
+const DIV_TYPE_META: Record<string, string> = {
+  heavy: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300",
+  medium: "bg-cyan-100 text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-300",
+  light: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+};
+const LOC_BAR_COLORS = ["bg-indigo-500", "bg-violet-500", "bg-emerald-500", "bg-amber-500", "bg-rose-400"];
+const DONUT_COLORS: Record<string, string> = { heavy: "#6366f1", medium: "#a855f7", light: "#22c55e", other: "#94a3b8" };
 
 // ── page ──────────────────────────────────────────────────────────────────────
 export default function ReportsPage() {
-  const router     = useRouter();
-  const months     = useMemo(() => monthOptions(), []);
+  const router = useRouter();
+  const months = useMemo(() => monthOptions(), []);
 
   // Non-admin roles are locked to their assigned location — no "All locations" escape hatch.
   const { isAdmin, locationId: locId, setLocationId: setLocId } = useLocationFilter();
 
-  const [monthIdx, setMonthIdx] = useState(0);  // 0 = current month
-  const [locs,     setLocs]     = useState<Location[]>([]);
-  const [dash,     setDash]     = useState<DashResp | null>(null);
+  const [monthIdx, setMonthIdx] = useState(0); // 0 = current month
+  const [locs, setLocs] = useState<Location[]>([]);
+  const [dash, setDash] = useState<DashResp | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [trucks,   setTrucks]   = useState<TruckObj[]>([]);
-  const [loading,  setLoading]  = useState(false);
-  const [error,    setError]    = useState("");
+  const [trucks, setTrucks] = useState<TruckObj[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [chartMetric, setChartMetric] = useState<"revenue" | "trucks">("revenue");
 
   // load locations once
   useEffect(() => {
@@ -162,7 +344,9 @@ export default function ReportsPage() {
     setLoading(true); setError("");
     try {
       const dashUrl = `/dashboard${locId ? `?location_id=${locId}` : ""}`;
-      const sessUrl = `/parking-sessions?limit=300&sort_by=created_at&order=desc${locId ? `&location_id=${locId}` : ""}`;
+      // A generous cap keeps the 6-month trend / month-over-month comparisons
+      // reasonably accurate without needing a dedicated aggregate endpoint.
+      const sessUrl = `/parking-sessions?limit=1000&sort_by=created_at&order=desc${locId ? `&location_id=${locId}` : ""}`;
       const truckUrl = `/trucks?limit=300`;
 
       const [d, s, t] = await Promise.all([
@@ -181,62 +365,113 @@ export default function ReportsPage() {
 
   // ── derived data ──────────────────────────────────────────────────────────
   const { year: selYear, month: selMonth } = months[monthIdx];
+  const prevMonth = months[monthIdx + 1] ?? null;
 
-  // sessions in selected month
   const monthSessions = useMemo(() =>
     sessions.filter(s => inMonth(s.check_out_time ?? s.created_at, selYear, selMonth)),
     [sessions, selYear, selMonth]
   );
-
-  // kpi stats
-  const totalTrucks   = useMemo(() => new Set(monthSessions.map(s => s.truck_id)).size, [monthSessions]);
-  const avgStay       = useMemo(() => {
-    const days = monthSessions.map(s => s.days).filter((d): d is number => d != null && d > 0);
-    return days.length ? (days.reduce((a, b) => a + b, 0) / days.length) : 0;
-  }, [monthSessions]);
-  const peakOccupancy = dash?.kpis.occupancy_percent ?? 0;
-  const mismatches    = useMemo(() =>
-    sessions.filter(s => s.driver_match === "mismatch" && inMonth(s.check_out_time ?? s.created_at, selYear, selMonth)).length,
-    [sessions, selYear, selMonth]
+  const prevMonthSessions = useMemo(() =>
+    prevMonth ? sessions.filter(s => inMonth(s.check_out_time ?? s.created_at, prevMonth.year, prevMonth.month)) : [],
+    [sessions, prevMonth]
   );
 
-  // monthly revenue (last 6 months)
-  const monthlyRevenue = useMemo(() => {
-    const now = new Date();
-    return Array.from({ length: 6 }, (_, i) => {
-      const d   = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
-      const y   = d.getFullYear(); const m = d.getMonth();
-      const rev = sessions.filter(s => inMonth(s.check_out_time ?? s.created_at, y, m))
-                          .reduce((sum, s) => sum + (s.total_amount ?? 0), 0);
-      return { label: d.toLocaleDateString("en-IN", { month: "short" }), value: rev };
-    });
-  }, [sessions]);
+  function truckCount(list: Session[]) { return new Set(list.map(s => s.truck_id)).size; }
+  function avgStayOf(list: Session[]) {
+    const d = list.map(s => s.days).filter((x): x is number => x != null && x > 0);
+    return d.length ? d.reduce((a, b) => a + b, 0) / d.length : 0;
+  }
+  function revenueOf(list: Session[]) { return list.reduce((sum, s) => sum + (s.total_amount ?? 0), 0); }
+  function mismatchesOf(list: Session[]) { return list.filter(s => s.driver_match === "mismatch").length; }
 
-  // revenue by location
+  const totalTrucks = truckCount(monthSessions);
+  const avgStay = avgStayOf(monthSessions);
+  const mismatches = mismatchesOf(monthSessions);
+  const monthRevenue = revenueOf(monthSessions);
+  const occupancyPercent = dash?.kpis.occupancy_percent ?? 0;
+
+  const prevTotalTrucks = truckCount(prevMonthSessions);
+  const prevAvgStay = avgStayOf(prevMonthSessions);
+  const prevMismatches = mismatchesOf(prevMonthSessions);
+  const prevMonthRevenue = revenueOf(prevMonthSessions);
+
+  const completedSessions = monthSessions.filter(s => s.status === "released").length;
+  const activeSessions = monthSessions.filter(s => s.status === "parked" || s.status === "overdue").length;
+  const avgRevenuePerTruck = totalTrucks > 0 ? monthRevenue / totalTrucks : 0;
+
+  // 6-month trend series (used for KPI sparklines and the toggleable bar chart)
+  const revenueSeries  = useMemo(() => monthlySeries(sessions, 6, revenueOf), [sessions]);
+  const trucksSeries   = useMemo(() => monthlySeries(sessions, 6, truckCount), [sessions]);
+  const avgStaySeries  = useMemo(() => monthlySeries(sessions, 6, avgStayOf).map(p => p.value), [sessions]);
+  const mismatchSeries = useMemo(() => monthlySeries(sessions, 6, mismatchesOf).map(p => p.value), [sessions]);
+
+  const activeSeries = chartMetric === "revenue" ? revenueSeries : trucksSeries;
+  const chartColor    = chartMetric === "revenue" ? "#4f46e5" : "#0ea5e9";
+  const chartFormat   = chartMetric === "revenue" ? fmtShort : fmtInt;
+  const sixMoTotal    = revenueSeries.reduce((a, b) => a + b.value, 0);
+  const sixMoAvg      = sixMoTotal / (revenueSeries.length || 1);
+  const bestMonth     = revenueSeries.reduce((a, b) => (b.value > a.value ? b : a), revenueSeries[0] ?? { label: "—", value: 0 });
+
+  // revenue by location (dynamic, supports any number of locations)
   const revenueByLoc = useMemo(() => {
     const map: Record<string, number> = {};
     monthSessions.forEach(s => { map[s.location_id] = (map[s.location_id] ?? 0) + (s.total_amount ?? 0); });
     const locMap: Record<string, string> = {};
     locs.forEach(l => { locMap[l.id] = l.name; });
-    const entries = Object.entries(map).map(([id, amt]) => ({ name: locMap[id] ?? id.slice(0, 8), amount: amt }));
-    entries.sort((a, b) => b.amount - a.amount);
-    return entries.slice(0, 5);
+    return Object.entries(map)
+      .map(([id, amt]) => ({ name: locMap[id] ?? id.slice(0, 8), amount: amt }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 6);
   }, [monthSessions, locs]);
-
   const maxLocRev = Math.max(...revenueByLoc.map(r => r.amount), 1);
+  const totalLocRev = revenueByLoc.reduce((a, b) => a + b.amount, 0);
 
   // truck type distribution
   const truckTypeDist = useMemo(() => {
     const map: Record<string, number> = {};
     trucks.forEach(t => { const k = t.truck_type?.toLowerCase() ?? "other"; map[k] = (map[k] ?? 0) + 1; });
     const total = Object.values(map).reduce((a, b) => a + b, 0) || 1;
-    const colors: Record<string, string> = { heavy: "#6366f1", medium: "#a855f7", light: "#22c55e", other: "#94a3b8" };
     return Object.entries(map).map(([type, cnt]) => ({
       label: type.charAt(0).toUpperCase() + type.slice(1),
       count: cnt, pct: Math.round(cnt / total * 100),
-      color: colors[type] ?? "#94a3b8",
+      color: DONUT_COLORS[type] ?? DONUT_COLORS.other,
     })).sort((a, b) => b.pct - a.pct);
   }, [trucks]);
+
+  // derived, honest insights — only rendered when the underlying figure is meaningful
+  const insights = useMemo(() => {
+    const items: { icon: React.ReactNode; text: string; tone: string }[] = [];
+    if (dash) {
+      const busiest = dash.weekly_revenue.filter(d => d.total > 0).reduce((a, b) => (b.total > a.total ? b : a), dash.weekly_revenue[0]);
+      if (busiest && busiest.total > 0) {
+        items.push({ icon: <TrendingUp className="w-4 h-4" />, tone: "text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10",
+          text: `${busiest.day} was the busiest day this week, with ${fmtShort(busiest.total)} in revenue.` });
+      }
+      const weekTotal = dash.payment_split.total_cash + dash.payment_split.total_card_upi;
+      if (weekTotal > 0) {
+        const cashWins = dash.payment_split.cash_percent >= dash.payment_split.card_upi_percent;
+        items.push({ icon: <Wallet className="w-4 h-4" />, tone: "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10",
+          text: `${(cashWins ? dash.payment_split.cash_percent : dash.payment_split.card_upi_percent).toFixed(0)}% of this week's revenue came from ${cashWins ? "cash" : "card/UPI"} payments.` });
+      }
+      if (dash.kpis.total_slots > 0) {
+        items.push({ icon: <Activity className="w-4 h-4" />, tone: "text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10",
+          text: `${dash.kpis.occupancy_percent.toFixed(0)}% of slots are occupied right now (${dash.kpis.occupied_slots}/${dash.kpis.total_slots}).` });
+      }
+    }
+    if (prevMonthRevenue > 0) {
+      const delta = Math.round(((monthRevenue - prevMonthRevenue) / prevMonthRevenue) * 100);
+      items.push({
+        icon: delta >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />,
+        tone: delta >= 0 ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10" : "text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10",
+        text: `Revenue is ${delta >= 0 ? "up" : "down"} ${Math.abs(delta)}% compared to ${prevMonth?.label}.`,
+      });
+    }
+    if (mismatches > 0) {
+      items.push({ icon: <AlertTriangle className="w-4 h-4" />, tone: "text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10",
+        text: `${mismatches} driver mismatch${mismatches > 1 ? "es" : ""} flagged this month — review in Verification.` });
+    }
+    return items;
+  }, [dash, prevMonthRevenue, monthRevenue, prevMonth, mismatches]);
 
   // export
   async function exportPDF() {
@@ -256,234 +491,260 @@ export default function ReportsPage() {
     <>
       <style>{`@media print { .no-print { display:none!important; } }`}</style>
 
-      <div className="px-4 sm:px-5 lg:px-6 py-5 w-full space-y-6">
+      <div className="relative min-h-full px-4 sm:px-5 lg:px-6 py-5 w-full space-y-5">
+        <div className="pointer-events-none fixed inset-0 -z-10 bg-gradient-to-br from-slate-50 via-indigo-50/40 to-cyan-50/40 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950" />
 
         {/* header */}
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2 text-xs text-gray-400 mb-1.5">
-              <Link href="/dashboard" className="hover:text-blue-600 transition">Dashboard</Link>
+            <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-slate-500 mb-1.5">
+              <Link href="/dashboard" className="hover:text-indigo-600 dark:hover:text-indigo-400 transition">Dashboard</Link>
               <ChevronRight className="w-3 h-3" />
-              <span className="text-gray-600 font-medium">Reports</span>
+              <span className="text-gray-600 dark:text-slate-300 font-medium">Reports</span>
             </div>
-            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Reports &amp; analytics</h1>
-            <p className="text-sm text-gray-400 mt-0.5">Trends, occupancy, revenue and operational summaries.</p>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight">Reports &amp; analytics</h1>
+            <p className="text-sm text-gray-400 dark:text-slate-500 mt-0.5">Trends, occupancy, revenue and operational summaries.</p>
+          </div>
+          <div className="no-print flex items-center gap-2">
+            <button onClick={load} disabled={loading}
+              className="p-2.5 text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-white dark:hover:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl transition shrink-0">
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            </button>
+            <button onClick={exportPDF}
+              className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 hover:-translate-y-0.5 text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-md shadow-indigo-200 dark:shadow-none transition-all duration-200 whitespace-nowrap">
+              <Download className="w-4 h-4" />Export PDF
+            </button>
           </div>
         </div>
 
         {/* filters */}
         <div className="no-print flex flex-col sm:flex-row gap-3">
           <div className="flex-1">
-            <LocationSelect
-              value={locId}
-              onChange={setLocId}
-              locations={locs}
-              allowAll={isAdmin}
-              locked={!isAdmin}
-              className="w-full"
-            />
+            <LocationSelect value={locId} onChange={setLocId} locations={locs} allowAll={isAdmin} locked={!isAdmin} className="w-full" />
           </div>
-          <div className="relative flex-1">
-            <select value={monthIdx} onChange={e => setMonthIdx(Number(e.target.value))} className={selectCls}>
-              {months.map((m, i) => <option key={i} value={i}>{m.label}</option>)}
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+          <div className="flex-1">
+            <EnumFilterSelect className="w-full" value={String(monthIdx)} onChange={(v) => setMonthIdx(Number(v))}
+              options={months.map((m, i) => ({ value: String(i), label: m.label }))} showDot={false} />
           </div>
-          <button onClick={exportPDF}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-sm shadow-blue-200 transition whitespace-nowrap">
-            <Download className="w-4 h-4" />Export PDF
-          </button>
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+          <div className="flex items-center gap-2 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl px-4 py-3">
             <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-            <p className="text-sm text-red-700">{error}</p>
+            <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
           </div>
         )}
 
-        {/* ── top section: stat cards + revenue by location ── */}
+        {/* ── KPI row ── */}
+        <div className="grid grid-cols-2 xl:grid-cols-5 gap-3.5">
+          {loading ? (
+            Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-[104px] rounded-3xl" />)
+          ) : (
+            <>
+              <KPICard delay={0} label="Total Trucks Served" value={totalTrucks} format={fmtInt}
+                icon={<Truck className="w-4 h-4 text-blue-600 dark:text-blue-300" />} iconBg="bg-blue-100 dark:bg-blue-500/15"
+                sub={months[monthIdx].label} badge={pctBadge(totalTrucks, prevTotalTrucks)}
+                sparklineData={trucksSeries.map(p => p.value)} sparklineColor="#3b82f6" />
+              <KPICard delay={0.06} label="Avg. Stay" value={avgStay} format={n => n > 0 ? `${n.toFixed(1)}d` : "—"}
+                icon={<Clock className="w-4 h-4 text-emerald-600 dark:text-emerald-300" />} iconBg="bg-emerald-100 dark:bg-emerald-500/15"
+                sub="Per truck" badge={pctBadge(avgStay, prevAvgStay)}
+                sparklineData={avgStaySeries} sparklineColor="#10b981" />
+              <KPICard delay={0.12} label="Current Occupancy" value={occupancyPercent} format={n => `${n.toFixed(0)}%`}
+                icon={<Activity className="w-4 h-4 text-amber-600 dark:text-amber-300" />} iconBg="bg-amber-100 dark:bg-amber-500/15"
+                sub={`${dash?.kpis.occupied_slots ?? 0} / ${dash?.kpis.total_slots ?? 0} slots`} />
+              <KPICard delay={0.18} label="Mismatches" value={mismatches} format={fmtInt}
+                icon={<AlertTriangle className="w-4 h-4 text-red-600 dark:text-red-300" />} iconBg="bg-red-100 dark:bg-red-500/15"
+                sub="This month" badge={pctBadge(mismatches, prevMismatches, true)}
+                sparklineData={mismatchSeries} sparklineColor="#ef4444" />
+              <KPICard delay={0.24} label="Today's Check-ins" value={dash?.kpis.today_checkins ?? 0} format={fmtInt}
+                icon={<LogIn className="w-4 h-4 text-violet-600 dark:text-violet-300" />} iconBg="bg-violet-100 dark:bg-violet-500/15"
+                sub="All locations" badge={countBadge(dash?.kpis.checkins_diff)} />
+            </>
+          )}
+        </div>
+
+        {/* ── revenue by location + live overview ── */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-
-          {/* 4 stat cards (2×2) */}
-          <div className="lg:col-span-3 grid grid-cols-2 gap-4">
-
-            {/* Total trucks served */}
-            <div className="bg-blue-50 border border-blue-100 rounded-2xl px-5 py-5 relative overflow-hidden">
-              <div className="absolute right-3 top-3 w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
-                <Truck className="w-5 h-5 text-blue-500" />
-              </div>
-              <p className="text-xs font-semibold text-blue-500">Total trucks served</p>
-              {loading ? <div className="h-8 w-16 bg-blue-100 rounded-lg animate-pulse mt-2" />
-                : <p className="text-4xl font-black text-blue-700 mt-1">{totalTrucks || monthSessions.length}</p>}
-              <p className="text-xs text-blue-400 mt-1">{months[monthIdx].label}</p>
-            </div>
-
-            {/* Avg stay */}
-            <div className="bg-emerald-50 border border-emerald-100 rounded-2xl px-5 py-5 relative overflow-hidden">
-              <div className="absolute right-3 top-3 w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
-                <Clock className="w-5 h-5 text-emerald-500" />
-              </div>
-              <p className="text-xs font-semibold text-emerald-500">Avg. stay</p>
-              {loading ? <div className="h-8 w-20 bg-emerald-100 rounded-lg animate-pulse mt-2" />
-                : <p className="text-4xl font-black text-emerald-600 mt-1">{avgStay > 0 ? `${avgStay.toFixed(1)} days` : "—"}</p>}
-              <p className="text-xs text-emerald-400 mt-1">Per truck</p>
-            </div>
-
-            {/* Peak occupancy */}
-            <div className="bg-amber-50 border border-amber-100 rounded-2xl px-5 py-5 relative overflow-hidden">
-              <div className="absolute right-3 top-3 w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
-                <Activity className="w-5 h-5 text-amber-500" />
-              </div>
-              <p className="text-xs font-semibold text-amber-500">Peak occupancy</p>
-              {loading ? <div className="h-8 w-16 bg-amber-100 rounded-lg animate-pulse mt-2" />
-                : <p className="text-4xl font-black text-amber-600 mt-1">{peakOccupancy > 0 ? `${peakOccupancy.toFixed(0)}%` : "—"}</p>}
-              <p className="text-xs text-amber-400 mt-1">{months[monthIdx].label}</p>
-            </div>
-
-            {/* Mismatches */}
-            <div className="bg-red-50 border border-red-100 rounded-2xl px-5 py-5 relative overflow-hidden">
-              <div className="absolute right-3 top-3 w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-red-500" />
-              </div>
-              <p className="text-xs font-semibold text-red-500">Mismatches</p>
-              {loading ? <div className="h-8 w-10 bg-red-100 rounded-lg animate-pulse mt-2" />
-                : <p className="text-4xl font-black text-red-600 mt-1">{mismatches}</p>}
-              <p className="text-xs text-red-400 mt-1">This month</p>
-            </div>
-          </div>
-
-          {/* Revenue by location */}
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-5">
+          <GlassCard className="lg:col-span-3 p-5">
             <div className="flex items-center gap-2 mb-4">
-              <MapPin className="w-4 h-4 text-gray-400" />
-              <p className="text-sm font-bold text-gray-800">Revenue by location</p>
+              <MapPin className="w-4 h-4 text-gray-400 dark:text-slate-500" />
+              <p className="text-sm font-bold text-gray-800 dark:text-slate-200">Revenue by location</p>
+              <span className="text-xs text-gray-400 dark:text-slate-500 ml-auto">{months[monthIdx].label}</span>
             </div>
             {loading ? (
-              <div className="space-y-3">{Array.from({length:3}).map((_,i) => <div key={i} className="h-8 bg-gray-100 rounded-lg animate-pulse" />)}</div>
+              <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-9 rounded-xl" />)}</div>
             ) : revenueByLoc.length === 0 ? (
-              <p className="text-sm text-gray-400 italic text-center py-6">No data for this period.</p>
+              <EmptyState icon={<MapPin className="w-8 h-8" />} text="No revenue recorded for this period." />
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-3.5">
                 {revenueByLoc.map((loc, i) => {
-                  const barColors = ["bg-blue-500","bg-violet-500","bg-emerald-500","bg-amber-500","bg-red-400"];
                   const pct = Math.round(loc.amount / maxLocRev * 100);
+                  const share = totalLocRev > 0 ? Math.round(loc.amount / totalLocRev * 100) : 0;
                   return (
-                    <div key={loc.name}>
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-xs font-semibold text-blue-600 truncate">{loc.name}</p>
-                        <p className="text-xs font-bold text-gray-700 shrink-0 ml-2">{fmtShort(loc.amount)}</p>
-                      </div>
-                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full transition-all duration-700 ${barColors[i % barColors.length]}`} style={{ width: `${pct}%` }} />
+                    <div key={loc.name} className="flex items-center gap-3">
+                      <span className="w-6 h-6 rounded-lg bg-gray-100 dark:bg-slate-800 text-[11px] font-bold text-gray-500 dark:text-slate-400 flex items-center justify-center shrink-0">{i + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1 gap-2">
+                          <p className="text-xs font-semibold text-gray-700 dark:text-slate-200 truncate flex items-center gap-1.5">
+                            {loc.name}
+                            {i === 0 && <Crown className="w-3 h-3 text-amber-400 shrink-0" />}
+                          </p>
+                          <p className="text-xs font-bold text-gray-800 dark:text-slate-200 shrink-0 ml-2">{fmtShort(loc.amount)} <span className="text-gray-400 dark:text-slate-500 font-medium">· {share}%</span></p>
+                        </div>
+                        <div className="h-2 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full transition-all duration-700 ${LOC_BAR_COLORS[i % LOC_BAR_COLORS.length]}`} style={{ width: `${pct}%` }} />
+                        </div>
                       </div>
                     </div>
                   );
                 })}
               </div>
             )}
-          </div>
+          </GlassCard>
+
+          <GlassCard className="lg:col-span-2 p-5">
+            <p className="text-sm font-bold text-gray-800 dark:text-slate-200 mb-4">Live overview</p>
+            {loading || !dash ? (
+              <div className="grid grid-cols-2 gap-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14 rounded-xl" />)}</div>
+            ) : (
+              <div className="flex items-center gap-4">
+                <RatioRing percent={dash.kpis.occupancy_percent} color={occColor(dash.kpis.occupancy_percent)} />
+                <div className="flex-1 min-w-0 grid grid-cols-2 gap-3">
+                  <MiniStat label="Occupied" value={`${dash.kpis.occupied_slots} / ${dash.kpis.total_slots}`} />
+                  <MiniStat label="Available" value={fmtInt(Math.max(dash.kpis.total_slots - dash.kpis.occupied_slots, 0))} />
+                  <MiniStat label="Today's Revenue" value={fmtShort(dash.kpis.today_revenue)} />
+                  <MiniStat label="Occupancy" value={`${dash.kpis.occupancy_percent.toFixed(0)}%`} />
+                </div>
+              </div>
+            )}
+          </GlassCard>
         </div>
 
-        {/* ── bottom section: bar chart + donut ── */}
+        {/* ── monthly trend + truck type distribution ── */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-
-          {/* Monthly revenue bar chart */}
-          <div className="lg:col-span-3 bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-5">
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-sm font-bold text-gray-800">
-                Monthly revenue ({new Date().getFullYear()})
-              </p>
-              <div className="flex items-center gap-1.5">
-                <div className="w-3 h-3 rounded-sm bg-indigo-500" />
-                <span className="text-xs text-gray-400 font-medium">Revenue</span>
+          <GlassCard className="lg:col-span-3 p-5">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <p className="text-sm font-bold text-gray-800 dark:text-slate-200">Monthly trend</p>
+              <div className="flex items-center gap-1 bg-gray-50 dark:bg-slate-800/60 rounded-xl p-1">
+                {(["revenue", "trucks"] as const).map(m => (
+                  <button key={m} onClick={() => setChartMetric(m)}
+                    className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition ${chartMetric === m ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200"}`}>
+                    {m === "revenue" ? "Revenue" : "Trucks served"}
+                  </button>
+                ))}
               </div>
             </div>
-            {loading ? (
-              <div className="h-48 bg-gray-50 rounded-xl animate-pulse" />
-            ) : (
-              <BarChart bars={monthlyRevenue} color="#4f46e5" />
+            {!loading && chartMetric === "revenue" && (
+              <div className="flex flex-wrap gap-x-6 gap-y-1 mb-3">
+                <MiniStat label="Total (6mo)" value={fmtShort(sixMoTotal)} />
+                <MiniStat label="Best Month" value={`${bestMonth.label} · ${fmtShort(bestMonth.value)}`} />
+                <MiniStat label="Avg / Month" value={fmtShort(sixMoAvg)} />
+              </div>
             )}
-          </div>
+            {loading ? <Skeleton className="h-52 rounded-xl" /> : <BarChart bars={activeSeries} color={chartColor} valueFormat={chartFormat} />}
+          </GlassCard>
 
-          {/* Truck type distribution donut */}
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-5">
-            <p className="text-sm font-bold text-gray-800 mb-4">Truck type distribution</p>
+          <GlassCard className="lg:col-span-2 p-5">
+            <p className="text-sm font-bold text-gray-800 dark:text-slate-200 mb-4">Truck type distribution</p>
             {loading ? (
-              <div className="h-48 bg-gray-50 rounded-xl animate-pulse" />
+              <Skeleton className="h-52 rounded-xl" />
             ) : truckTypeDist.length === 0 ? (
-              <p className="text-sm text-gray-400 italic text-center py-10">No truck data.</p>
+              <EmptyState icon={<PackageSearch className="w-8 h-8" />} text="No truck data available." />
             ) : (
               <div className="flex flex-col items-center gap-4">
-                <DonutChart segments={truckTypeDist} />
+                <DonutChart segments={truckTypeDist} centerValue={fmtInt(trucks.length)} centerLabel="Total Trucks" />
                 <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5">
                   {truckTypeDist.map(s => (
                     <div key={s.label} className="flex items-center gap-1.5">
                       <div className="w-3 h-3 rounded-sm shrink-0" style={{ background: s.color }} />
-                      <span className="text-xs text-gray-600 font-medium">{s.label} {s.pct}%</span>
+                      <span className="text-xs text-gray-600 dark:text-slate-300 font-medium">{s.label} · {s.count} ({s.pct}%)</span>
                     </div>
                   ))}
                 </div>
               </div>
             )}
-          </div>
-
+          </GlassCard>
         </div>
 
-        {/* ── additional: payment split + live occupancy ── */}
-        {dash && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-              <p className="text-xs font-semibold text-gray-500 mb-3">Payment split</p>
-              <div className="space-y-2">
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-gray-600 font-medium">Cash</span>
-                    <span className="font-bold text-emerald-600">{dash.payment_split.cash_percent.toFixed(0)}%</span>
-                  </div>
-                  <div className="h-2 bg-gray-100 rounded-full"><div className="h-full bg-emerald-500 rounded-full" style={{ width: `${dash.payment_split.cash_percent}%` }} /></div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-gray-600 font-medium">Card / UPI</span>
-                    <span className="font-bold text-blue-600">{dash.payment_split.card_upi_percent.toFixed(0)}%</span>
-                  </div>
-                  <div className="h-2 bg-gray-100 rounded-full"><div className="h-full bg-blue-500 rounded-full" style={{ width: `${dash.payment_split.card_upi_percent}%` }} /></div>
-                </div>
-              </div>
-              <div className="flex justify-between mt-3 pt-2 border-t border-gray-100">
-                <p className="text-xs text-gray-400">Cash: <span className="font-bold text-gray-700">{fmtShort(dash.payment_split.total_cash)}</span></p>
-                <p className="text-xs text-gray-400">Card/UPI: <span className="font-bold text-gray-700">{fmtShort(dash.payment_split.total_card_upi)}</span></p>
+        {/* ── weekly activity + occupancy by division ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+          <GlassCard className="lg:col-span-3 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm font-bold text-gray-800 dark:text-slate-200">Weekly activity</p>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /><span className="text-[11px] text-gray-400 dark:text-slate-500 font-medium">Cash</span></div>
+                <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm bg-blue-500" /><span className="text-[11px] text-gray-400 dark:text-slate-500 font-medium">Card/UPI</span></div>
               </div>
             </div>
+            {loading ? <Skeleton className="h-52 rounded-xl" /> : !dash || dash.weekly_revenue.every(d => d.total === 0) ? (
+              <EmptyState icon={<Wallet className="w-8 h-8" />} text="No revenue recorded in the last 7 days." />
+            ) : (
+              <WeeklyActivityChart data={dash.weekly_revenue} />
+            )}
+          </GlassCard>
 
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-              <p className="text-xs font-semibold text-gray-500 mb-3">Live occupancy</p>
-              <div className="flex items-end gap-2 mb-2">
-                <p className="text-3xl font-black text-gray-900">{dash.kpis.occupied_slots}</p>
-                <p className="text-sm text-gray-400 pb-1">/ {dash.kpis.total_slots} slots</p>
-              </div>
-              <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full transition-all duration-700 ${dash.kpis.occupancy_percent >= 90 ? "bg-red-500" : dash.kpis.occupancy_percent >= 70 ? "bg-amber-500" : "bg-emerald-500"}`}
-                  style={{ width: `${dash.kpis.occupancy_percent}%` }} />
-              </div>
-              <p className="text-xs text-gray-400 mt-2">{dash.kpis.occupancy_percent.toFixed(0)}% occupied right now</p>
+          <GlassCard className="lg:col-span-2 p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Layers className="w-4 h-4 text-gray-400 dark:text-slate-500" />
+              <p className="text-sm font-bold text-gray-800 dark:text-slate-200">Occupancy by division</p>
             </div>
+            {loading ? (
+              <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-9 rounded-xl" />)}</div>
+            ) : !dash || dash.division_occupancy.length === 0 ? (
+              <EmptyState icon={<Layers className="w-8 h-8" />} text="No divisions configured yet." />
+            ) : (
+              <div className="space-y-3.5 max-h-56 overflow-y-auto pr-1">
+                {dash.division_occupancy.map(d => (
+                  <div key={d.division_id}>
+                    <div className="flex items-center justify-between mb-1 gap-2">
+                      <p className="text-xs font-semibold text-gray-700 dark:text-slate-200 truncate flex items-center gap-1.5">
+                        {d.division_name}
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${DIV_TYPE_META[d.truck_type.toLowerCase()] ?? "bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-400"}`}>{d.truck_type}</span>
+                      </p>
+                      <p className="text-xs font-bold text-gray-800 dark:text-slate-200 shrink-0">{d.occupied_slots}/{d.total_slots}</p>
+                    </div>
+                    <div className="h-2 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all duration-700 ${occBarClass(d.occupancy_percent)}`} style={{ width: `${d.occupancy_percent}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </GlassCard>
+        </div>
 
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-              <p className="text-xs font-semibold text-gray-500 mb-3">Today&apos;s revenue</p>
-              <p className="text-3xl font-black text-gray-900">{fmtShort(dash.kpis.today_revenue)}</p>
-              <div className={`flex items-center gap-1 mt-1 ${dash.kpis.revenue_growth_percent >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                <TrendingUp className="w-3.5 h-3.5" />
-                <span className="text-xs font-semibold">
-                  {dash.kpis.revenue_growth_percent >= 0 ? "+" : ""}{dash.kpis.revenue_growth_percent.toFixed(0)}% vs yesterday
-                </span>
-              </div>
-              {(dash.kpis.yesterday_revenue ?? 0) > 0 && (
-                <p className="text-xs text-gray-400 mt-1">Yesterday: {fmtShort(dash.kpis.yesterday_revenue as number)}</p>
-              )}
+        {/* ── parking performance strip ── */}
+        <GlassCard className="p-5">
+          <p className="text-sm font-bold text-gray-800 dark:text-slate-200 mb-4">Parking performance · {months[monthIdx].label}</p>
+          {loading ? (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-xl" />)}</div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+              <MiniStat label="Total Sessions" value={fmtInt(monthSessions.length)} />
+              <MiniStat label="Completed" value={fmtInt(completedSessions)} />
+              <MiniStat label="Active Now" value={fmtInt(activeSessions)} />
+              <MiniStat label="Avg Revenue / Truck" value={fmtShort(avgRevenuePerTruck)} />
+              <MiniStat label="Total Revenue" value={fmtShort(monthRevenue)} />
             </div>
-          </div>
+          )}
+        </GlassCard>
+
+        {/* ── insights ── */}
+        {!loading && insights.length > 0 && (
+          <GlassCard className="p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Sparkles className="w-4 h-4 text-indigo-400" />
+              <p className="text-sm font-bold text-gray-800 dark:text-slate-200">Insights</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {insights.map((it, i) => (
+                <div key={i} className="flex items-start gap-3 bg-gray-50/60 dark:bg-slate-800/40 rounded-2xl px-4 py-3">
+                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${it.tone}`}>{it.icon}</div>
+                  <p className="text-xs text-gray-600 dark:text-slate-300 leading-relaxed">{it.text}</p>
+                </div>
+              ))}
+            </div>
+          </GlassCard>
         )}
 
       </div>

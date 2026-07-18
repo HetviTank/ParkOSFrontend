@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  ChevronRight, ChevronLeft, ChevronDown, Search, X, Loader2, AlertCircle,
+  ChevronRight, ChevronLeft, Search, X, Loader2, AlertCircle,
   Download, RefreshCw, Receipt, Phone, Printer, FileDown, Send, CheckCircle2,
   TrendingUp, Banknote, CreditCard, Smartphone, Clock, Wallet, IndianRupee,
   Eye, MoreVertical, CheckCircle, SlidersHorizontal, RotateCcw, Truck as TruckIcon,
@@ -16,6 +16,7 @@ import { Overlay } from "@/components/ui/Overlay";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { LocationSelect } from "@/components/ui/LocationSelect";
+import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
 
 import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
 
@@ -158,6 +159,19 @@ const METHOD_META: Record<string, { label: string; chip: string; Icon: typeof Ba
   upi:  { label: "UPI",  chip: "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-300 dark:border-violet-500/20", Icon: Smartphone },
 };
 
+// Filter dropdown options — pay-status reuses STATUS_META's paid/pending dot
+// colors; method reuses the same emerald/blue/violet families as METHOD_META's
+// chips, for consistency with the row badges.
+const PAY_STATUS_FILTER_OPTIONS = [
+  { value: "paid", label: "Paid only", dot: STATUS_META.paid.dot },
+  { value: "pending", label: "Outstanding only", dot: STATUS_META.pending.dot },
+];
+const METHOD_FILTER_OPTIONS = [
+  { value: "cash", label: "Cash", dot: "bg-emerald-500" },
+  { value: "card", label: "Card", dot: "bg-blue-500" },
+  { value: "upi", label: "UPI", dot: "bg-violet-500" },
+];
+
 // ── formatters ────────────────────────────────────────────────────────────────
 function fmtRupees(n: number) { return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`; }
 function fmtDate(iso: string | null) {
@@ -183,7 +197,6 @@ function calcDuration(ci: string | null, co: string | null): string {
 }
 
 const inputCls = "w-full px-3.5 py-2.5 text-sm text-gray-900 dark:text-slate-100 bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-xl placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white dark:focus:bg-slate-800 transition";
-const selectCls = "pl-3 pr-8 py-2 text-sm bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-xl text-gray-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white dark:focus:bg-slate-800 transition appearance-none cursor-pointer";
 
 // ── KPI card (mirrors established Trucks/Khata/Owners convention) ────────────
 function useCountUp(target: number, duration = 800) {
@@ -744,6 +757,7 @@ export default function BillingPage() {
           <div className="h-6 w-px bg-gray-100 dark:bg-slate-700 hidden sm:block" />
 
           <LocationSelect
+            className="w-full sm:w-auto"
             value={locationId}
             onChange={(v) => { setLocationId(v); setPage(1); }}
             locations={locations}
@@ -751,56 +765,57 @@ export default function BillingPage() {
             locked={!isAdmin}
           />
 
-          <div className="relative">
-            <select value={datePreset} onChange={e => { setDatePreset(e.target.value as DatePreset); setPage(1); }} className={selectCls}>
-              {DATE_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
-            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-slate-500 pointer-events-none" />
-          </div>
+          <EnumFilterSelect
+            className="w-full sm:w-auto"
+            value={datePreset}
+            onChange={(v) => { setDatePreset(v as DatePreset); setPage(1); }}
+            options={DATE_PRESETS}
+            showDot={false}
+          />
           {datePreset === "custom" && (
-            <div className="flex items-center gap-1.5">
-              <input type="date" value={customFrom} onChange={e => { setCustomFrom(e.target.value); setPage(1); }} className={`${inputCls} w-auto`} />
+            <div className="flex items-center gap-1.5 w-full sm:w-auto">
+              <input type="date" value={customFrom} onChange={e => { setCustomFrom(e.target.value); setPage(1); }} className={`${inputCls} flex-1 sm:w-auto`} />
               <span className="text-xs text-gray-400 dark:text-slate-500">to</span>
-              <input type="date" value={customTo} onChange={e => { setCustomTo(e.target.value); setPage(1); }} className={`${inputCls} w-auto`} />
+              <input type="date" value={customTo} onChange={e => { setCustomTo(e.target.value); setPage(1); }} className={`${inputCls} flex-1 sm:w-auto`} />
             </div>
           )}
 
-          <div className="relative">
-            <select value={payStatusFilter} onChange={e => { setPayStatusFilter(e.target.value); setPage(1); }} className={selectCls}>
-              <option value="">All statuses</option>
-              <option value="paid">Paid only</option>
-              <option value="pending">Outstanding only</option>
-            </select>
-            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-slate-500 pointer-events-none" />
-          </div>
+          <EnumFilterSelect
+            className="w-full sm:w-auto"
+            value={payStatusFilter}
+            onChange={(v) => { setPayStatusFilter(v); setPage(1); }}
+            options={PAY_STATUS_FILTER_OPTIONS}
+            allLabel="All statuses"
+          />
 
-          <div className="relative">
-            <select value={methodFilter} onChange={e => { setMethodFilter(e.target.value); setPage(1); }} className={selectCls}>
-              <option value="">All methods</option>
-              <option value="cash">Cash</option>
-              <option value="card">Card</option>
-              <option value="upi">UPI</option>
-            </select>
-            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-slate-500 pointer-events-none" />
-          </div>
+          <EnumFilterSelect
+            className="w-full sm:w-auto"
+            value={methodFilter}
+            onChange={(v) => { setMethodFilter(v); setPage(1); }}
+            options={METHOD_FILTER_OPTIONS}
+            allLabel="All methods"
+          />
 
-          <div className="relative">
-            <select value={sortValue} onChange={e => { setSortValue(e.target.value as SortValue); setPage(1); }} className={selectCls}>
-              {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-slate-500 pointer-events-none" />
-          </div>
+          <EnumFilterSelect
+            className="w-full sm:w-auto"
+            value={sortValue}
+            onChange={(v) => { setSortValue(v as SortValue); setPage(1); }}
+            options={SORT_OPTIONS}
+            showDot={false}
+          />
 
-          <button onClick={() => setShowAdvanced(v => !v)}
-            className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl transition ${showAdvanced ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300" : "bg-gray-50 dark:bg-slate-800/60 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800"}`}>
-            <SlidersHorizontal className="w-3.5 h-3.5" />Amount
-          </button>
-
-          {filtersActive && (
-            <button onClick={clearFilters} className="text-xs font-semibold text-red-500 hover:text-red-700 bg-red-50 dark:bg-red-500/10 dark:hover:bg-red-500/20 hover:bg-red-100 px-3 py-2 rounded-xl flex items-center gap-1.5 transition">
-              <RotateCcw className="w-3.5 h-3.5" />Reset
+          <div className="flex items-center gap-2 w-full sm:w-auto sm:contents">
+            <button onClick={() => setShowAdvanced(v => !v)}
+              className={`flex-1 sm:flex-none flex items-center justify-center sm:justify-start gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl transition ${showAdvanced ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300" : "bg-gray-50 dark:bg-slate-800/60 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800"}`}>
+              <SlidersHorizontal className="w-3.5 h-3.5" />Amount
             </button>
-          )}
+
+            {filtersActive && (
+              <button onClick={clearFilters} className="flex-1 sm:flex-none text-xs font-semibold text-red-500 hover:text-red-700 bg-red-50 dark:bg-red-500/10 dark:hover:bg-red-500/20 hover:bg-red-100 px-3 py-2 rounded-xl flex items-center justify-center sm:justify-start gap-1.5 transition">
+                <RotateCcw className="w-3.5 h-3.5" />Reset
+              </button>
+            )}
+          </div>
         </div>
 
         <AnimatePresence>

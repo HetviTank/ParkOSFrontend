@@ -20,6 +20,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Overlay } from "@/components/ui/Overlay";
+import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
 
 import { handleUnauthorized } from "@/lib/auth";
 
@@ -87,7 +88,7 @@ interface Enriched extends Session {
   verifiedByName: string | null;
 }
 
-type DateFilter = "today" | "yesterday" | "7days" | "custom";
+type DateFilter = "all" | "today" | "yesterday" | "7days" | "30days" | "custom";
 type StatusFilter = "all" | "match" | "mismatch" | "override" | "pending";
 
 // ── status config (shared by table, mobile cards, CSV, drawer) ───────────────
@@ -95,12 +96,31 @@ const STATUS_CFG = {
   match:    { icon: ShieldCheck, label: "Matched",           color: "emerald" as const },
   mismatch: { icon: ShieldAlert, label: "Mismatch",          color: "red" as const },
   override: { icon: BadgeCheck,  label: "Override approved", color: "amber" as const },
-  pending:  { icon: Clock,       label: "Pending",           color: "gray" as const },
+  pending:  { icon: Clock,       label: "Not verified",      color: "gray" as const },
 };
 
 function statusOf(value: string): keyof typeof STATUS_CFG {
   return (value as keyof typeof STATUS_CFG) in STATUS_CFG ? (value as keyof typeof STATUS_CFG) : "pending";
 }
+
+// Filter dropdown options — "all" is a real option here (not a resettable ""
+// state), so these are rendered as required-selects reusing STATUS_CFG's dot
+// colors for consistency with the row badges.
+const DATE_FILTER_OPTIONS = [
+  { value: "all", label: "All time" },
+  { value: "today", label: "Today" },
+  { value: "yesterday", label: "Yesterday" },
+  { value: "7days", label: "Last 7 Days" },
+  { value: "30days", label: "Last 30 Days" },
+  { value: "custom", label: "Custom" },
+];
+const STATUS_FILTER_OPTIONS = [
+  { value: "all", label: "All statuses", dot: "bg-gray-300 dark:bg-slate-600" },
+  { value: "match", label: STATUS_CFG.match.label, dot: "bg-emerald-500" },
+  { value: "mismatch", label: STATUS_CFG.mismatch.label, dot: "bg-red-500" },
+  { value: "override", label: STATUS_CFG.override.label, dot: "bg-amber-500" },
+  { value: "pending", label: STATUS_CFG.pending.label, dot: "bg-gray-400" },
+];
 
 function StatusBadge({ value }: { value: string }) {
   const c = STATUS_CFG[statusOf(value)];
@@ -148,6 +168,7 @@ function calcDuration(checkIn: string | null | undefined): string {
 }
 
 function matchesDateFilter(iso: string | null, filter: DateFilter, customFrom: string, customTo: string): boolean {
+  if (filter === "all") return true;
   if (!iso) return false;
   const d = new Date(iso);
   const now = new Date();
@@ -158,6 +179,10 @@ function matchesDateFilter(iso: string | null, filter: DateFilter, customFrom: s
   }
   if (filter === "7days") {
     const from = new Date(now); from.setDate(now.getDate() - 7); from.setHours(0, 0, 0, 0);
+    return d.getTime() >= from.getTime();
+  }
+  if (filter === "30days") {
+    const from = new Date(now); from.setDate(now.getDate() - 30); from.setHours(0, 0, 0, 0);
     return d.getTime() >= from.getTime();
   }
   // custom
@@ -601,7 +626,7 @@ export default function VerificationPage() {
 
   // Filters
   const [search, setSearch] = useState("");
-  const [dateFilter, setDateFilter] = useState<DateFilter>("7days");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
@@ -631,14 +656,17 @@ export default function VerificationPage() {
 
   const loadTable = useCallback(async () => {
     try {
-      const recentRes = await apiFetch<{ list: Session[] }>("/parking-sessions?limit=300&start=0&sort_by=check_in_time&order=desc");
-      const sessions = (recentRes.list ?? [])
-        .filter(s => s.driver_match !== "pending")
-        .sort((a, b) => {
-          const ta = new Date(a.check_out_time ?? a.check_in_time).getTime();
-          const tb = new Date(b.check_out_time ?? b.check_in_time).getTime();
-          return tb - ta;
-        });
+      // Fetch ALL released sessions — these are every truck that went through checkout,
+      // regardless of driver_match value. "pending" here means released without explicit
+      // verification (e.g. legacy records), shown as "Not verified" in the table.
+      const recentRes = await apiFetch<{ list: Session[]; count: number }>(
+        "/parking-sessions?status=released&sort_by=check_in_time&order=desc&limit=500&start=0"
+      );
+      const sessions = (recentRes.list ?? []).sort((a, b) => {
+        const ta = new Date(a.check_out_time ?? a.check_in_time).getTime();
+        const tb = new Date(b.check_out_time ?? b.check_in_time).getTime();
+        return tb - ta;
+      });
       const enriched = sessions.length ? await enrich(sessions) : [];
       setTableRows(enriched);
     } catch { /* silent fail */ }
@@ -747,13 +775,15 @@ export default function VerificationPage() {
 
   const stats = useMemo(() => {
     const now = new Date();
+    // verifiedToday: drivers that were verified (match or override) and released today
     const verifiedToday = tableRows.filter(r => {
       if (r.driver_match !== "match" && r.driver_match !== "override") return false;
       const ts = r.check_out_time ?? r.check_in_time;
       return ts ? isSameDay(new Date(ts), now) : false;
     }).length;
     const overrideApproved = tableRows.filter(r => r.driver_match === "override").length;
-    const releasedToday = tableRows.filter(r => r.status === "released" && r.check_out_time && isSameDay(new Date(r.check_out_time), now)).length;
+    // releasedToday: ALL trucks released today (all statuses)
+    const releasedToday = tableRows.filter(r => r.check_out_time && isSameDay(new Date(r.check_out_time), now)).length;
     return { verifiedToday, overrideApproved, releasedToday };
   }, [tableRows]);
 
@@ -868,63 +898,57 @@ export default function VerificationPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative">
+          <div className="relative w-full sm:w-auto">
             <Search className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search truck, driver…"
-              className="pl-9 pr-3 py-2.5 text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-44 sm:w-52"
+              className="w-full pl-9 pr-3 py-2.5 text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 sm:w-44 md:w-52"
             />
           </div>
 
-          <select
+          <EnumFilterSelect
+            className="w-full sm:w-auto"
             value={dateFilter}
-            onChange={e => setDateFilter(e.target.value as DateFilter)}
-            className="text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-700 dark:text-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <option value="today">Today</option>
-            <option value="yesterday">Yesterday</option>
-            <option value="7days">Last 7 Days</option>
-            <option value="custom">Custom</option>
-          </select>
+            onChange={(v) => setDateFilter(v as DateFilter)}
+            options={DATE_FILTER_OPTIONS}
+            showDot={false}
+          />
 
           {dateFilter === "custom" && (
-            <>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
               <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
-                className="text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-700 dark:text-slate-300 px-2.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                className="flex-1 sm:flex-none text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-700 dark:text-slate-300 px-2.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
-                className="text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-700 dark:text-slate-300 px-2.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-            </>
+                className="flex-1 sm:flex-none text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-700 dark:text-slate-300 px-2.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
           )}
 
-          <select
+          <EnumFilterSelect
+            className="w-full sm:w-auto"
             value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value as StatusFilter)}
-            className="text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-700 dark:text-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <option value="all">All statuses</option>
-            <option value="match">Matched</option>
-            <option value="mismatch">Mismatch</option>
-            <option value="override">Override approved</option>
-            <option value="pending">Pending</option>
-          </select>
+            onChange={(v) => setStatusFilter(v as StatusFilter)}
+            options={STATUS_FILTER_OPTIONS}
+          />
 
-          <button
-            onClick={() => exportCsv(filteredData)}
-            className="flex items-center gap-2 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 px-4 py-2.5 rounded-xl text-sm font-semibold transition"
-          >
-            <Download className="w-4 h-4" /> Export
-          </button>
+          <div className="flex items-center gap-2 w-full sm:w-auto sm:contents">
+            <button
+              onClick={() => exportCsv(filteredData)}
+              className="flex-1 sm:flex-none flex items-center justify-center sm:justify-start gap-2 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 px-4 py-2.5 rounded-xl text-sm font-semibold transition"
+            >
+              <Download className="w-4 h-4" /> Export
+            </button>
 
-          <button
-            onClick={handleRefreshAll}
-            disabled={refreshing}
-            className="flex items-center gap-2 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 px-4 py-2.5 rounded-xl text-sm font-semibold transition"
-          >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
+            <button
+              onClick={handleRefreshAll}
+              disabled={refreshing}
+              className="flex-1 sm:flex-none flex items-center justify-center sm:justify-start gap-2 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 px-4 py-2.5 rounded-xl text-sm font-semibold transition"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
         </div>
       </div>
 
