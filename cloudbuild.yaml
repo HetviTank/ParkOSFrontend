@@ -8,12 +8,12 @@ steps:
     args:
       - '-c'
       - |
-        echo "Starting build for API: $$REACT_APP_API_URL"
+        echo "Starting build for API: $$NEXT_PUBLIC_API_BASE_URL"
 
         npm run build
 
     env:
-      - 'REACT_APP_API_URL=${_REACT_APP_API_URL}'
+      - 'NEXT_PUBLIC_API_BASE_URL=${_NEXT_PUBLIC_API_BASE_URL}'
 
   - name: 'gcr.io/cloud-builders/gsutil'
     args:
