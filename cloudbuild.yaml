@@ -1,0 +1,43 @@
+steps:
+  - name: 'node:20'
+    entrypoint: npm
+    args: ['ci']
+
+  - name: 'node:20'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        echo "Starting build for API: $$REACT_APP_API_URL"
+
+        npm run build
+
+    env:
+      - 'REACT_APP_API_URL=${_REACT_APP_API_URL}'
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    args:
+      - '-m'
+      - 'rsync'
+      - '-d'
+      - '-r'
+      - './build'
+      - 'gs://www.parkos.space'
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gsutil web set -m index.html -e index.html gs://www.parkos.space
+        gsutil iam ch allUsers:objectViewer gs://www.parkos.space
+        gsutil -m setmeta -h "Content-Type:application/javascript" gs://www.parkos.space/static/js/*.js
+        gsutil -m setmeta -h "Content-Type:text/css" \
+        gs://www.parkos.space/static/css/*.css
+        gsutil -m setmeta -h "Cache-Control:public,max-age=31536000,immutable" \
+        gs://www.parkos.space/static/**
+        gsutil setmeta -h "Cache-Control:no-cache,no-store,must-revalidate" \
+        gs://www.parkos.space/index.html
+
+options:
+  logging: CLOUD_LOGGING_ONLY
