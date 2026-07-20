@@ -15,8 +15,9 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Overlay } from "@/components/ui/Overlay";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
+import { LocationSelect } from "@/components/ui/LocationSelect";
 
-import { handleUnauthorized } from "@/lib/auth";
+import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -51,6 +52,7 @@ interface Owner {
 interface TruckObj { id: string; truck_number: string; truck_type: string | null }
 interface SessionObj { id: string; check_in_time: string | null; check_out_time: string | null; total_amount: number | null; status: string }
 interface Enriched { owner: Owner; trucks: TruckObj[]; totalSpend: number; lastSession: SessionObj | null }
+interface LocationObj { id: string; name: string; city?: string | null }
 
 const PAGE_SIZE = 12;
 
@@ -462,6 +464,9 @@ function Pagination({ page, total, totalPages, onPage }: { page: number; total: 
 
 // ── page ──────────────────────────────────────────────────────────────────────
 export default function OwnersPage() {
+  const { isAdmin, locationId, setLocationId } = useLocationFilter();
+  const [locations, setLocations] = useState<LocationObj[]>([]);
+
   const [rows,    setRows]    = useState<Enriched[]>([]);
   const [total,   setTotal]   = useState(0);
   const [page,    setPage]    = useState(1);
@@ -508,6 +513,12 @@ export default function OwnersPage() {
   const [actionErr,   setActionErr]   = useState("");
 
   useEffect(() => {
+    apiFetch<{ count: number; list: LocationObj[] }>("/locations?limit=50")
+      .then(r => setLocations(r.list ?? []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     const t = setTimeout(() => { setSearch(searchInput); setPage(1); }, 500);
     return () => clearTimeout(t);
   }, [searchInput]);
@@ -538,18 +549,19 @@ export default function OwnersPage() {
       let url = `/owners?start=${start}&limit=${PAGE_SIZE}&sort_by=${opt.sort_by}&order=${opt.order}`;
       if (q) url += `&search=${encodeURIComponent(q)}`;
       if (status) url += `&is_active=${status}`;
+      if (locationId) url += `&location_id=${locationId}`;
       const data = await apiFetch<{ count: number; list: Owner[] }>(url);
       setTotal(data.count ?? 0);
       const enriched = await enrich(data.list ?? []);
       setRows(enriched);
     } catch (e) { setListErr(e instanceof Error ? e.message : "Failed to load owners."); }
     finally { setLoading(false); }
-  }, [enrich]);
+  }, [enrich, locationId]);
 
   useEffect(() => { fetchList(page, search, statusFilter, sortValue); }, [page, search, statusFilter, sortValue, fetchList]);
 
-  const filtersActive = !!search || !!statusFilter;
-  function clearFilters() { setSearchInput(""); setSearch(""); setStatusFilter(""); setPage(1); }
+  const filtersActive = !!search || !!statusFilter || (isAdmin && !!locationId);
+  function clearFilters() { setSearchInput(""); setSearch(""); setStatusFilter(""); setLocationId(""); setPage(1); }
 
   function resetAddForm() {
     setFName(""); setFMobile(""); setFCompany(""); setFEmail(""); setFAddress(""); setFGst("");
@@ -722,6 +734,15 @@ export default function OwnersPage() {
           </div>
 
           <div className="h-6 w-px bg-gray-100 dark:bg-slate-700 hidden sm:block" />
+
+          <LocationSelect
+            className="w-full sm:w-auto"
+            value={locationId}
+            onChange={(v) => { setLocationId(v); setPage(1); }}
+            locations={locations}
+            allowAll={isAdmin}
+            locked={!isAdmin}
+          />
 
           <EnumFilterSelect
             className="w-full sm:w-auto"

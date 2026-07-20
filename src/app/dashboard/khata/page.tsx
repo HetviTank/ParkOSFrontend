@@ -18,8 +18,9 @@ import { Overlay } from "@/components/ui/Overlay";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
+import { LocationSelect } from "@/components/ui/LocationSelect";
 
-import { handleUnauthorized } from "@/lib/auth";
+import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -65,6 +66,7 @@ interface Enriched extends Khata {
 }
 interface BillTruck { truck_id: string; truck_number: string; session_count: number; total_days: number; total_amount: number }
 interface KhataBill { khata_id: string; period_start: string; billing_day: number; trucks: BillTruck[]; grand_total: number }
+interface LocationObj { id: string; name: string; city?: string | null }
 
 const TRUCK_TYPES = [
   { value: "heavy", label: "Heavy (20T+)" },
@@ -325,6 +327,9 @@ const OPTIONAL_COLS: { key: ColKey; label: string }[] = [
 
 // ── main page ─────────────────────────────────────────────────────────────────
 export default function KhataMasterPage() {
+  const { isAdmin, locationId, setLocationId } = useLocationFilter();
+  const [locations, setLocations] = useState<LocationObj[]>([]);
+
   const [rows, setRows] = useState<Enriched[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -406,6 +411,12 @@ export default function KhataMasterPage() {
   }
 
   useEffect(() => {
+    apiFetch<{ count: number; list: LocationObj[] }>("/locations?limit=50")
+      .then(r => setLocations(r.list ?? []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     const t = setTimeout(() => { setSearch(searchInput); setPagination(p => ({ ...p, pageIndex: 0 })); }, 500);
     return () => clearTimeout(t);
   }, [searchInput]);
@@ -451,13 +462,14 @@ export default function KhataMasterPage() {
       let url = `/khatas?start=${start}&limit=${pagination.pageSize}&sort_by=${sortParams.sort_by}&order=${sortParams.order}`;
       if (search) url += `&search=${encodeURIComponent(search)}`;
       if (statusFilter) url += `&is_active=${statusFilter === "active"}`;
+      if (locationId) url += `&location_id=${locationId}`;
       const data = await apiFetch<{ count: number; list: Khata[] }>(url);
       setTotal(data.count ?? 0);
       const enriched = await enrich(data.list ?? []);
       setRows(enriched);
     } catch (e) { setListErr(e instanceof Error ? e.message : "Failed to load accounts."); }
     finally { setLoading(false); }
-  }, [pagination, sortParams, search, statusFilter, enrich]);
+  }, [pagination, sortParams, search, statusFilter, locationId, enrich]);
 
   useEffect(() => { fetchList(); }, [fetchList]);
 
@@ -473,7 +485,7 @@ export default function KhataMasterPage() {
   const refreshAll = useCallback(() => { fetchList(); fetchStats(); }, [fetchList, fetchStats]);
 
   function clearFilters() {
-    setSearchInput(""); setSearch(""); setStatusFilter(""); setSortKey("newest");
+    setSearchInput(""); setSearch(""); setStatusFilter(""); setSortKey("newest"); setLocationId("");
     setPagination(p => ({ ...p, pageIndex: 0 }));
   }
 
@@ -507,7 +519,7 @@ export default function KhataMasterPage() {
   const isColVisible = (key: ColKey) => columnVisibility[key] !== false;
 
   const totalPages = table.getPageCount();
-  const filtersActive = !!(searchInput || statusFilter || sortKey !== "newest");
+  const filtersActive = !!(searchInput || statusFilter || sortKey !== "newest" || (isAdmin && locationId));
   const selectedIds = Object.keys(selected).filter(id => selected[id]);
   const allOnPageSelected = rows.length > 0 && rows.every(r => selected[r.id]);
 
@@ -885,6 +897,15 @@ export default function KhataMasterPage() {
                   className="w-full pl-10 pr-9 py-2 text-sm bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-xl placeholder-gray-400 dark:placeholder-slate-500 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-400 focus:bg-white dark:focus:bg-slate-800 transition" />
                 {searchInput && <button onClick={() => setSearchInput("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200"><X className="w-3.5 h-3.5" /></button>}
               </div>
+
+              <LocationSelect
+                className="w-full sm:w-auto"
+                value={locationId}
+                onChange={(v) => { setLocationId(v); setPagination(p => ({ ...p, pageIndex: 0 })); }}
+                locations={locations}
+                allowAll={isAdmin}
+                locked={!isAdmin}
+              />
 
               <EnumFilterSelect
                 className="w-full sm:w-auto"

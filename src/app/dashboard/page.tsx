@@ -7,7 +7,7 @@ import { motion } from "motion/react";
 import {
   TrendingUp, TrendingDown, AlertTriangle, Clock,
   Layers, BarChart2, Activity, CreditCard, Loader2, ExternalLink,
-  Bell, Megaphone, Search, Phone, ChevronDown, Info,
+  Bell, Megaphone, Phone, ChevronDown, Info,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -23,6 +23,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { LocationSelect, type LocationOption } from "@/components/ui/LocationSelect";
+import { useLocationFilter } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -107,12 +109,26 @@ export default function DashboardPage() {
   const [overdueRules, setOverdueRules] = useState<OverdueRule[]>([]);
   const [overdueTrucks, setOverdueTrucks] = useState<EnrichedOverdue[]>([]);
   const [overdueLoading, setOverdueLoading] = useState(false);
+  const [locations, setLocations] = useState<LocationOption[]>([]);
+
+  // Non-admin roles are locked to their assigned location — no "All locations" escape hatch.
+  const { isAdmin, locationId, setLocationId } = useLocationFilter();
 
   // mount flag for recharts SSR guard
   useEffect(() => {
     setMounted(true);
     const id = setInterval(() => setClock(clockNow()), 60_000);
     return () => clearInterval(id);
+  }, []);
+
+  // load the location list once (for the location picker)
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    fetch(`${BASE_URL}/locations?limit=50`, { headers: { token } })
+      .then(r => r.ok ? r.json() : { list: [] })
+      .then(r => setLocations(r.list ?? []))
+      .catch(() => {});
   }, []);
 
   const fetchData = useCallback(async (silent = false) => {
@@ -122,7 +138,8 @@ export default function DashboardPage() {
     if (!silent) setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${BASE_URL}/dashboard`, { headers: { token } });
+      const url = `${BASE_URL}/dashboard${locationId ? `?location_id=${locationId}` : ""}`;
+      const res = await fetch(url, { headers: { token } });
       if (res.status === 401) { router.replace("/login"); return; }
       if (!res.ok) throw new Error("Failed to load dashboard data.");
       setData(await res.json());
@@ -132,17 +149,18 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, [router, locationId]);
 
   const fetchOverdueTrucks = useCallback(async () => {
     const token = localStorage.getItem("token") ?? "";
     if (!token) return;
     setOverdueLoading(true);
     try {
+      const locParam = locationId ? `&location_id=${locationId}` : "";
       const [rulesRes, parkedRes, overdueRes] = await Promise.all([
         fetch(`${BASE_URL}/overdue-alert-rules`, { headers: { token } }).then(r => r.ok ? r.json() : { list: [] }).catch(() => ({ list: [] })),
-        fetch(`${BASE_URL}/parking-sessions?status=parked&start=0&limit=50&sort_by=check_in_time&order=asc`, { headers: { token } }).then(r => r.ok ? r.json() : { list: [] }).catch(() => ({ list: [] })),
-        fetch(`${BASE_URL}/parking-sessions?status=overdue&start=0&limit=50&sort_by=check_in_time&order=asc`, { headers: { token } }).then(r => r.ok ? r.json() : { list: [] }).catch(() => ({ list: [] })),
+        fetch(`${BASE_URL}/parking-sessions?status=parked&start=0&limit=50&sort_by=check_in_time&order=asc${locParam}`, { headers: { token } }).then(r => r.ok ? r.json() : { list: [] }).catch(() => ({ list: [] })),
+        fetch(`${BASE_URL}/parking-sessions?status=overdue&start=0&limit=50&sort_by=check_in_time&order=asc${locParam}`, { headers: { token } }).then(r => r.ok ? r.json() : { list: [] }).catch(() => ({ list: [] })),
       ]);
       const rules: OverdueRule[] = (rulesRes.list ?? []).sort((a: OverdueRule, b: OverdueRule) => b.days - a.days);
       setOverdueRules(rules);
@@ -178,7 +196,7 @@ export default function DashboardPage() {
     } finally {
       setOverdueLoading(false);
     }
-  }, []);
+  }, [locationId]);
 
   useEffect(() => {
     const stored = localStorage.getItem("user");
@@ -220,32 +238,40 @@ export default function DashboardPage() {
               </p>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
-              <div className="hidden lg:flex items-center gap-2 w-52 rounded-xl bg-white/70 dark:bg-slate-800/60 border border-white/60 dark:border-slate-700/60 px-3 py-2.5 text-sm text-gray-400 dark:text-slate-500">
-                <Search className="w-4 h-4 shrink-0" />
-                <span className="truncate">Search trucks, owners…</span>
-              </div>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 shrink-0">
+              {/* Location — scopes the KPIs, Live Slot Map and Overdue Trucks below.
+                  Admins can view any location; everyone else is locked to their own. */}
+              <LocationSelect
+                className="w-full sm:w-56"
+                value={locationId}
+                onChange={setLocationId}
+                locations={locations}
+                allowAll={isAdmin}
+                locked={!isAdmin}
+              />
 
-              <a
-                href="#live-alerts"
-                title="Live alerts"
-                className="relative w-10 h-10 rounded-xl flex items-center justify-center bg-white/70 hover:bg-white border border-white/60 shadow-sm transition dark:bg-slate-800/60 dark:hover:bg-slate-800 dark:border-slate-700/60"
-              >
-                <Bell className="w-[18px] h-[18px] text-gray-500 dark:text-slate-300" />
-                {!!data?.live_alerts?.length && (
-                  <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
-                    {data.live_alerts.length}
-                  </span>
-                )}
-              </a>
+              <div className="flex items-center gap-2 justify-end sm:justify-start">
+                <a
+                  href="#live-alerts"
+                  title="Live alerts"
+                  className="relative w-10 h-10 rounded-xl flex items-center justify-center bg-white/70 hover:bg-white border border-white/60 shadow-sm transition dark:bg-slate-800/60 dark:hover:bg-slate-800 dark:border-slate-700/60"
+                >
+                  <Bell className="w-[18px] h-[18px] text-gray-500 dark:text-slate-300" />
+                  {!!data?.live_alerts?.length && (
+                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                      {data.live_alerts.length}
+                    </span>
+                  )}
+                </a>
 
-              <ThemeToggle />
+                <ThemeToggle />
 
-              <div
-                title={user.role.name}
-                className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-cyan-500 text-white flex items-center justify-center font-bold text-sm shadow-sm shrink-0"
-              >
-                {user.name.charAt(0).toUpperCase()}
+                <div
+                  title={user.role.name}
+                  className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-cyan-500 text-white flex items-center justify-center font-bold text-sm shadow-sm shrink-0"
+                >
+                  {user.name.charAt(0).toUpperCase()}
+                </div>
               </div>
             </div>
           </motion.div>

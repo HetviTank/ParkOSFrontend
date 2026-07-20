@@ -12,7 +12,8 @@ import {
 
 const PER_PAGE = 15;
 
-import { handleUnauthorized } from "@/lib/auth";
+import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
+import { LocationSelect } from "@/components/ui/LocationSelect";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -50,6 +51,7 @@ interface TruckObj  { id: string; truck_number: string; truck_type: string | nul
 interface Owner     { id: string; name: string; primary_mobile: string }
 interface AdminUser { id: string; name: string }
 interface Session   { id: string; truck_id: string | null; owner_id: string | null }
+interface LocationObj { id: string; name: string; city?: string | null }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 function noticeConfig(type: string) {
@@ -509,6 +511,9 @@ function AddNoticeModal({
 
 // ── main page ─────────────────────────────────────────────────────────────────
 export default function NoticesPage() {
+  const { isAdmin, locationId, setLocationId } = useLocationFilter();
+  const [locations, setLocations] = useState<LocationObj[]>([]);
+
   const [active,    setActive]    = useState<Notice[]>([]);
   const [activeErr, setActiveErr] = useState("");
   const [log,       setLog]       = useState<Notice[]>([]);
@@ -589,24 +594,32 @@ export default function NoticesPage() {
   const fetchActive = useCallback(async () => {
     setLoadingA(true); setActiveErr("");
     try {
-      const data = await apiFetch<{ count: number; list: Notice[] }>(`/notices?status=open&sort_by=created_at&order=desc&limit=20`);
+      let activeUrl = `/notices?status=open&sort_by=created_at&order=desc&limit=20`;
+      if (locationId) activeUrl += `&location_id=${locationId}`;
+      const data = await apiFetch<{ count: number; list: Notice[] }>(activeUrl);
       setActive(await enrichNotices(data.list ?? []));
     } catch (e) { setActiveErr(e instanceof Error ? e.message : "Failed to load alerts."); }
     finally { setLoadingA(false); }
-  }, []); // eslint-disable-line
+  }, [locationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchLog = useCallback(async (pageNum = 1) => {
     setLoadingL(true);
     try {
       const start = (pageNum - 1) * PER_PAGE;
-      const data = await apiFetch<{ count: number; list: Notice[] }>(
-        `/notices?sort_by=created_at&order=desc&start=${start}&limit=${PER_PAGE}`
-      );
+      let url = `/notices?sort_by=created_at&order=desc&start=${start}&limit=${PER_PAGE}`;
+      if (locationId) url += `&location_id=${locationId}`;
+      const data = await apiFetch<{ count: number; list: Notice[] }>(url);
       setLogTotal(data.count ?? 0);
       setLog(await enrichNotices(data.list ?? []));
     } catch { /* silent */ }
     finally { setLoadingL(false); }
-  }, []); // eslint-disable-line
+  }, [locationId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    apiFetch<{ count: number; list: LocationObj[] }>("/locations?limit=50")
+      .then(r => setLocations(r.list ?? []))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetchActive(); fetchLog(1);
@@ -658,7 +671,15 @@ export default function NoticesPage() {
             <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Notices &amp; alerts</h1>
             <p className="text-sm text-gray-400 mt-0.5">System alerts, owner communications, and operator notes.</p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <LocationSelect
+              value={locationId}
+              onChange={(v) => { setLocationId(v); goToPage(1); }}
+              locations={locations}
+              allowAll={isAdmin}
+              locked={!isAdmin}
+              className="w-full sm:w-auto"
+            />
             <button onClick={() => { fetchActive(); goToPage(1); }} disabled={loadingA || loadingL}
               className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 bg-white border border-gray-200 px-3 py-2 rounded-xl shadow-sm hover:bg-gray-50 transition">
               <RefreshCw className={`w-3.5 h-3.5 ${(loadingA || loadingL) ? "animate-spin" : ""}`} />
