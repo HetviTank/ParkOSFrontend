@@ -21,7 +21,7 @@ steps:
       - 'rsync'
       - '-d'
       - '-r'
-      - './build'
+      - './out'
       - 'gs://www.parkos.space'
 
   - name: 'gcr.io/cloud-builders/gsutil'
@@ -29,15 +29,15 @@ steps:
     args:
       - '-c'
       - |
-        gsutil web set -m index.html -e index.html gs://www.parkos.space
+        gsutil web set -m index.html -e 404.html gs://www.parkos.space
         gsutil iam ch allUsers:objectViewer gs://www.parkos.space
-        gsutil -m setmeta -h "Content-Type:application/javascript" gs://www.parkos.space/static/js/*.js
+        gsutil -m setmeta -h "Content-Type:application/javascript" gs://www.parkos.space/_next/static/**/*.js
         gsutil -m setmeta -h "Content-Type:text/css" \
-        gs://www.parkos.space/static/css/*.css
+        gs://www.parkos.space/_next/static/**/*.css
         gsutil -m setmeta -h "Cache-Control:public,max-age=31536000,immutable" \
-        gs://www.parkos.space/static/**
-        gsutil setmeta -h "Cache-Control:no-cache,no-store,must-revalidate" \
-        gs://www.parkos.space/index.html
+        gs://www.parkos.space/_next/static/**
+        gsutil -m setmeta -h "Cache-Control:no-cache,no-store,must-revalidate" \
+        gs://www.parkos.space/**/*.html
 
 options:
   logging: CLOUD_LOGGING_ONLY

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import { useRouter } from "next/navigation";
@@ -106,6 +106,14 @@ const STEPS = [
 
 // ── page ──────────────────────────────────────────────────────────────────────
 export default function CheckOutPage() {
+  return (
+    <Suspense fallback={<div className="px-6 py-10 text-center text-sm text-gray-400"><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Loading…</div>}>
+      <CheckOutPageContent />
+    </Suspense>
+  );
+}
+
+function CheckOutPageContent() {
   const router = useRouter();
 
   // search

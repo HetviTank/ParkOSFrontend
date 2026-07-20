@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ChevronRight, ArrowLeft, Truck as TruckIcon,
@@ -103,8 +103,18 @@ function SectionCard({ title, icon, children, accent = "blue" }: {
   );
 }
 
+// ── page export ───────────────────────────────────────────────────────────────
 export default function SessionDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  return (
+    <Suspense fallback={<div className="px-6 py-10 text-center text-sm text-gray-400"><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Loading…</div>}>
+      <SessionDetailContent />
+    </Suspense>
+  );
+}
+
+function SessionDetailContent() {
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id");
 
   const [session,      setSession]      = useState<Session | null>(null);
   const [truck,        setTruck]        = useState<TruckData | null>(null);

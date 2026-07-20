@@ -1399,7 +1399,7 @@ function DetailsDrawerBody({ s, approver, rules }: { s: Enriched; approver: User
         </span>
       </div>
 
-      <Link href={`/dashboard/trucks/${s.id}`} className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
+      <Link href={`/dashboard/trucks/session?id=${s.id}`} className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
         <ExternalLink className="w-3 h-3" />Open full session page
       </Link>
 
