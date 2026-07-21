@@ -31,13 +31,12 @@ steps:
       - |
         gsutil web set -m index.html -e 404.html gs://www.parkos.space
         gsutil iam ch allUsers:objectViewer gs://www.parkos.space
-        gsutil -m setmeta -h "Content-Type:application/javascript" gs://www.parkos.space/_next/static/**/*.js
-        gsutil -m setmeta -h "Content-Type:text/css" \
-        gs://www.parkos.space/_next/static/**/*.css
-        gsutil -m setmeta -h "Cache-Control:public,max-age=31536000,immutable" \
-        gs://www.parkos.space/_next/static/**
-        gsutil -m setmeta -h "Cache-Control:no-cache,no-store,must-revalidate" \
-        gs://www.parkos.space/**/*.html
+
+        # gsutil does not support ** globs — use ls -r with loops instead
+        gsutil ls -r gs://www.parkos.space/_next/static/ | grep '\.js$' | xargs -I{} gsutil setmeta -h "Content-Type:application/javascript" {}
+        gsutil ls -r gs://www.parkos.space/_next/static/ | grep '\.css$' | xargs -I{} gsutil setmeta -h "Content-Type:text/css" {}
+        gsutil ls -r gs://www.parkos.space/_next/static/ | grep -v ':$' | xargs -I{} gsutil setmeta -h "Cache-Control:public,max-age=31536000,immutable" {}
+        gsutil ls -r gs://www.parkos.space/ | grep '\.html$' | xargs -I{} gsutil setmeta -h "Cache-Control:no-cache,no-store,must-revalidate" {}
 
 options:
   logging: CLOUD_LOGGING_ONLY
