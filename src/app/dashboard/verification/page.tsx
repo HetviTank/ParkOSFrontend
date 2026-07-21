@@ -280,13 +280,13 @@ function StatCard({ icon: Icon, iconBg, iconColor, label, value }: {
   icon: React.ElementType; iconBg: string; iconColor: string; label: string; value: number;
 }) {
   return (
-    <GlassCard className="p-5 flex items-center gap-4">
-      <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${iconBg}`}>
-        <Icon className={`w-5 h-5 ${iconColor}`} />
+    <GlassCard className="p-3 sm:p-5 flex items-center gap-2.5 sm:gap-4">
+      <div className={`w-8 h-8 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center shrink-0 ${iconBg}`}>
+        <Icon className={`w-4 h-4 sm:w-5 sm:h-5 ${iconColor}`} />
       </div>
-      <div>
-        <p className="text-2xl font-bold text-gray-900 dark:text-white tabular-nums">{value}</p>
-        <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">{label}</p>
+      <div className="min-w-0">
+        <p className="text-lg sm:text-2xl font-bold text-gray-900 dark:text-white tabular-nums">{value}</p>
+        <p className="text-[11px] sm:text-xs text-gray-400 dark:text-slate-500 mt-0.5 truncate">{label}</p>
       </div>
     </GlassCard>
   );
@@ -980,7 +980,7 @@ export default function VerificationPage() {
       )}
 
       {/* ── Stats row ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5 sm:gap-4">
         <StatCard icon={ShieldCheck} iconBg="bg-emerald-100 dark:bg-emerald-500/15" iconColor="text-emerald-600" label="Verified Today" value={stats.verifiedToday} />
         <StatCard icon={AlertTriangle} iconBg="bg-amber-100 dark:bg-amber-500/15" iconColor="text-amber-600" label="Pending Verification" value={pendingCount} />
         <StatCard icon={BadgeCheck} iconBg="bg-orange-100 dark:bg-orange-500/15" iconColor="text-orange-600" label="Override Approved" value={stats.overrideApproved} />

@@ -309,7 +309,7 @@ export default function Sidebar({
               <button
                 onClick={handleLogout}
                 title="Logout"
-                className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:text-slate-500 dark:hover:text-red-400 dark:hover:bg-red-500/10 rounded-lg transition opacity-0 group-hover:opacity-100"
+                className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:text-slate-500 dark:hover:text-red-400 dark:hover:bg-red-500/10 rounded-lg transition shrink-0"
               >
                 <LogOut className="w-4 h-4" />
               </button>

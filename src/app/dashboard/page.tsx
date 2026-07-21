@@ -297,7 +297,7 @@ export default function DashboardPage() {
         {!loading && data && (
           <>
             {/* ── KPIs ── */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5 sm:gap-4">
               <KPICard
                 delay={0}
                 label="Total Slots"
@@ -401,28 +401,34 @@ function KPICard({
       whileHover={{ scale: 1.03 }}
       className="transition-shadow duration-300 hover:shadow-xl rounded-3xl"
     >
-      <GlassCard gradientBorder className="p-5 group">
-        <div className="flex items-start justify-between mb-3">
-          <p className="text-sm font-medium text-gray-500 dark:text-slate-400">{label}</p>
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${iconBg} transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6`}>
-            {icon}
+      <GlassCard gradientBorder className="p-3 sm:p-5 group">
+        <div className="flex items-start justify-between mb-2 sm:mb-3 gap-2">
+          <p className="text-xs sm:text-sm font-medium text-gray-500 dark:text-slate-400 truncate">{label}</p>
+          <div className={`w-7 h-7 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0 ${iconBg} transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6`}>
+            <div className="w-3.5 h-3.5 sm:w-5 sm:h-5">{icon}</div>
           </div>
         </div>
-        <div className="flex items-end justify-between gap-3">
+        <div className="flex items-end justify-between gap-2 sm:gap-3">
           <div className="min-w-0">
-            <p className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight tabular-nums">{value}</p>
+            <p className="text-lg sm:text-3xl font-bold text-gray-900 dark:text-white tracking-tight tabular-nums">{value}</p>
             {sub && (
-              <div className={`flex items-center gap-1 mt-2 text-sm font-medium ${subColor}`}>
-                {subIcon === "up"   && <TrendingUp  className="w-3.5 h-3.5" />}
-                {subIcon === "down" && <TrendingDown className="w-3.5 h-3.5" />}
-                <span>{sub}</span>
+              <div className={`flex items-center gap-1 mt-1 sm:mt-2 text-[11px] sm:text-sm font-medium ${subColor}`}>
+                {subIcon === "up"   && <TrendingUp  className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />}
+                {subIcon === "down" && <TrendingDown className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />}
+                <span className="truncate">{sub}</span>
               </div>
             )}
           </div>
           {trend?.kind === "sparkline" && (
-            <Sparkline data={trend.data} stroke={trend.color} width={72} height={32} />
+            <div className="hidden sm:block shrink-0">
+              <Sparkline data={trend.data} stroke={trend.color} width={72} height={32} />
+            </div>
           )}
-          {trend?.kind === "ring" && <OccupancyRing percent={trend.percent} color={trend.color} />}
+          {trend?.kind === "ring" && (
+            <div className="hidden sm:block shrink-0">
+              <OccupancyRing percent={trend.percent} color={trend.color} />
+            </div>
+          )}
         </div>
       </GlassCard>
     </motion.div>
@@ -910,15 +916,15 @@ function LoadingSkeleton() {
   const frameClasses = "rounded-3xl border border-white/60 dark:border-slate-800/70 shadow-sm";
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5 sm:gap-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className={`bg-white/70 dark:bg-slate-900/60 ${frameClasses} p-5 h-28`}>
-            <div className="flex justify-between mb-3">
-              <Skeleton className="h-3.5 w-24 rounded-full" />
-              <Skeleton className="w-10 h-10 rounded-xl" />
+          <div key={i} className={`bg-white/70 dark:bg-slate-900/60 ${frameClasses} p-3 sm:p-5 h-24 sm:h-28`}>
+            <div className="flex justify-between mb-2 sm:mb-3">
+              <Skeleton className="h-3 sm:h-3.5 w-16 sm:w-24 rounded-full" />
+              <Skeleton className="w-7 h-7 sm:w-10 sm:h-10 rounded-xl" />
             </div>
-            <Skeleton className="h-7 w-20 rounded-lg" />
-            <Skeleton className="h-3 w-28 rounded-full mt-2.5" />
+            <Skeleton className="h-5 sm:h-7 w-14 sm:w-20 rounded-lg" />
+            <Skeleton className="h-2.5 sm:h-3 w-20 sm:w-28 rounded-full mt-2 sm:mt-2.5" />
           </div>
         ))}
       </div>

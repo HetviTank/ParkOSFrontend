@@ -100,37 +100,37 @@ export default function HomePage() {
       {/* ── Hero ── */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-200/30 rounded-full blur-3xl animate-blob" />
-          <div className="absolute bottom-0 left-0 w-[420px] h-[420px] bg-emerald-200/30 rounded-full blur-3xl animate-blob" style={{ animationDelay: "4s" }} />
+          <div className="absolute top-0 right-0 w-[280px] h-[280px] sm:w-[500px] sm:h-[500px] bg-blue-200/30 rounded-full blur-3xl animate-blob" />
+          <div className="absolute bottom-0 left-0 w-[240px] h-[240px] sm:w-[420px] sm:h-[420px] bg-emerald-200/30 rounded-full blur-3xl animate-blob" style={{ animationDelay: "4s" }} />
         </div>
 
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-14 pb-20 lg:pt-20 lg:pb-28 grid lg:grid-cols-2 gap-12 lg:gap-8 items-center">
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-10 pb-14 sm:pt-14 sm:pb-20 lg:pt-20 lg:pb-28 grid lg:grid-cols-2 gap-10 lg:gap-8 items-center">
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: "easeOut" }}>
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-3 py-1.5 rounded-full mb-6">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-3 py-1.5 rounded-full mb-5 sm:mb-6">
               <Zap className="w-3.5 h-3.5" />Built for parking operators
             </span>
-            <h1 className="text-4xl sm:text-5xl lg:text-[3.25rem] font-bold text-gray-900 leading-[1.1] tracking-tight mb-6">
+            <h1 className="text-3xl sm:text-5xl lg:text-[3.25rem] font-bold text-gray-900 leading-[1.15] sm:leading-[1.1] tracking-tight mb-4 sm:mb-6">
               Smart Parking Management,{" "}
               <span className="bg-gradient-to-r from-blue-600 to-emerald-500 bg-clip-text text-transparent">Simplified.</span>
             </h1>
-            <p className="text-lg text-gray-500 leading-relaxed mb-8 max-w-lg">
+            <p className="text-base sm:text-lg text-gray-500 leading-relaxed mb-6 sm:mb-8 max-w-lg">
               One intelligent platform to manage trucks, slots, billing, and staff — from check-in to checkout, across every location you run.
             </p>
-            <div className="flex flex-wrap items-center gap-4 mb-10">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:gap-4 mb-8 sm:mb-10">
               <Link
                 href="/login"
-                className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-emerald-500 hover:from-blue-700 hover:to-emerald-600 text-white font-semibold px-6 py-3.5 rounded-xl shadow-lg shadow-blue-600/25 hover:shadow-xl hover:-translate-y-0.5 transition-all"
+                className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-emerald-500 hover:from-blue-700 hover:to-emerald-600 text-white font-semibold px-6 py-3.5 rounded-xl shadow-lg shadow-blue-600/25 hover:shadow-xl hover:-translate-y-0.5 transition-all"
               >
                 Get Started <ArrowRight className="w-4.5 h-4.5" />
               </Link>
               <a
                 href="#features"
-                className="flex items-center gap-2 text-gray-700 font-semibold px-6 py-3.5 rounded-xl border border-gray-200 hover:border-gray-300 hover:bg-white transition-all"
+                className="flex items-center justify-center gap-2 text-gray-700 font-semibold px-6 py-3.5 rounded-xl border border-gray-200 hover:border-gray-300 hover:bg-white transition-all"
               >
                 See Features
               </a>
             </div>
-            <p className="text-sm font-medium text-gray-400 tracking-wide">
+            <p className="text-xs sm:text-sm font-medium text-gray-400 tracking-wide">
               Secure <span className="mx-2 text-emerald-400">•</span> Real-Time
               <span className="mx-2 text-emerald-400">•</span> Scalable
               <span className="mx-2 text-emerald-400">•</span> Enterprise Ready
@@ -141,7 +141,7 @@ export default function HomePage() {
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.6, delay: 0.15, ease: "easeOut" }}
-            className="relative h-[380px] sm:h-[440px] lg:h-[480px]"
+            className="hidden sm:block relative h-[380px] sm:h-[440px] lg:h-[480px]"
           >
             <HeroVisual />
           </motion.div>
@@ -149,14 +149,14 @@ export default function HomePage() {
       </section>
 
       {/* ── Features ── */}
-      <section id="features" className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 scroll-mt-16">
-        <div className="text-center max-w-2xl mx-auto mb-14">
+      <section id="features" className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-14 sm:py-20 scroll-mt-16">
+        <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-14">
           <span className="text-xs font-bold text-blue-600 uppercase tracking-widest">Features</span>
-          <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mt-3 mb-4">Everything your yard needs, in one place</h2>
-          <p className="text-gray-500 text-lg">From the gate to the ledger — every part of the operation, covered.</p>
+          <h2 className="text-2xl sm:text-4xl font-bold text-gray-900 mt-3 mb-3 sm:mb-4">Everything your yard needs, in one place</h2>
+          <p className="text-gray-500 text-base sm:text-lg">From the gate to the ledger — every part of the operation, covered.</p>
         </div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
           {FEATURES.map((f, i) => (
             <motion.div
               key={f.title}
@@ -164,13 +164,13 @@ export default function HomePage() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-60px" }}
               transition={{ duration: 0.4, delay: (i % 4) * 0.06, ease: "easeOut" }}
-              className="group bg-white rounded-2xl border border-gray-100 shadow-sm p-6 hover:shadow-xl hover:-translate-y-1 transition-all duration-300"
+              className="group bg-white rounded-2xl border border-gray-100 shadow-sm p-4 sm:p-6 hover:shadow-xl hover:-translate-y-1 transition-all duration-300"
             >
-              <div className={`w-11 h-11 rounded-xl flex items-center justify-center mb-4 ${f.tint} transition-transform duration-300 group-hover:scale-110`}>
-                <f.icon className="w-5 h-5" />
+              <div className={`w-9 h-9 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center mb-3 sm:mb-4 ${f.tint} transition-transform duration-300 group-hover:scale-110`}>
+                <f.icon className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
               </div>
-              <h3 className="font-bold text-gray-900 mb-1.5">{f.title}</h3>
-              <p className="text-sm text-gray-500 leading-relaxed">{f.desc}</p>
+              <h3 className="font-bold text-gray-900 mb-1.5 text-sm sm:text-base">{f.title}</h3>
+              <p className="text-xs sm:text-sm text-gray-500 leading-relaxed">{f.desc}</p>
             </motion.div>
           ))}
         </div>
@@ -178,12 +178,12 @@ export default function HomePage() {
 
       {/* ── Why ParkOS / value props ── */}
       <section id="why" className="relative bg-white border-y border-gray-100 scroll-mt-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-          <div className="text-center max-w-2xl mx-auto mb-14">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-14 sm:py-20">
+          <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-14">
             <span className="text-xs font-bold text-emerald-600 uppercase tracking-widest">Why ParkOS</span>
-            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mt-3">Reliable software for a business that doesn&apos;t stop</h2>
+            <h2 className="text-2xl sm:text-4xl font-bold text-gray-900 mt-3">Reliable software for a business that doesn&apos;t stop</h2>
           </div>
-          <div className="grid sm:grid-cols-3 gap-10">
+          <div className="grid sm:grid-cols-3 gap-8 sm:gap-10">
             {VALUES.map((v, i) => (
               <motion.div
                 key={v.title}
@@ -193,11 +193,11 @@ export default function HomePage() {
                 transition={{ duration: 0.4, delay: i * 0.1, ease: "easeOut" }}
                 className="text-center sm:text-left"
               >
-                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-600 to-emerald-500 flex items-center justify-center mb-5 mx-auto sm:mx-0 shadow-lg shadow-blue-900/10">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-600 to-emerald-500 flex items-center justify-center mb-4 sm:mb-5 mx-auto sm:mx-0 shadow-lg shadow-blue-900/10">
                   <v.icon className="w-6 h-6 text-white" />
                 </div>
-                <h3 className="font-bold text-gray-900 text-lg mb-2">{v.title}</h3>
-                <p className="text-gray-500 leading-relaxed">{v.desc}</p>
+                <h3 className="font-bold text-gray-900 text-base sm:text-lg mb-2">{v.title}</h3>
+                <p className="text-gray-500 text-sm sm:text-base leading-relaxed">{v.desc}</p>
               </motion.div>
             ))}
           </div>
@@ -211,14 +211,14 @@ export default function HomePage() {
           className="absolute inset-0 opacity-10"
           style={{ backgroundImage: "radial-gradient(circle, white 1px, transparent 1px)", backgroundSize: "24px 24px" }}
         />
-        <div className="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center">
-          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">Ready to run a tighter yard?</h2>
-          <p className="text-blue-50 text-lg mb-10 max-w-xl mx-auto">
+        <div className="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-14 sm:py-20 text-center">
+          <h2 className="text-2xl sm:text-4xl font-bold text-white mb-3 sm:mb-4">Ready to run a tighter yard?</h2>
+          <p className="text-blue-50 text-base sm:text-lg mb-8 sm:mb-10 max-w-xl mx-auto">
             Sign in to your ParkOS dashboard and see everything happening across your locations in real time.
           </p>
           <Link
             href="/login"
-            className="inline-flex items-center gap-2 bg-white text-blue-700 font-semibold px-7 py-3.5 rounded-xl shadow-xl hover:shadow-2xl hover:-translate-y-0.5 transition-all"
+            className="inline-flex items-center justify-center gap-2 bg-white text-blue-700 font-semibold px-7 py-3.5 rounded-xl shadow-xl hover:shadow-2xl hover:-translate-y-0.5 transition-all w-full sm:w-auto"
           >
             Login Now <ArrowRight className="w-4.5 h-4.5" />
           </Link>
@@ -227,9 +227,9 @@ export default function HomePage() {
 
       {/* ── Footer ── */}
       <footer className="bg-slate-50 border-t border-gray-100">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 flex flex-col sm:flex-row items-center justify-between gap-4">
           <BrandMark size="sm" />
-          <p className="text-xs text-gray-400">© 2026 ParkOS • Smart Parking Management</p>
+          <p className="text-xs text-gray-400 text-center">© 2026 ParkOS • Smart Parking Management</p>
         </div>
       </footer>
     </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -1060,20 +1061,76 @@ function TruckRow({
   const priority = priorityFor(key, s, rules);
   const meta = STATUS_META[key];
   const isActive = s.status === "parked" || s.status === "overdue";
-  const menuRef = useRef<HTMLDivElement>(null);
-  const mobileMenuRef = useRef<HTMLDivElement>(null);
+
+  // Portal-positioned (fixed) row menu — escapes the table card's own
+  // overflow-hidden clipping, which otherwise cut the panel off whenever a
+  // row sat near the bottom of a short table (e.g. a single-row list).
+  const desktopBtnRef = useRef<HTMLButtonElement>(null);
+  const mobileBtnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+
+  function openFrom(ref: React.RefObject<HTMLButtonElement | null>) {
+    if (!menuOpen && ref.current) setRect(ref.current.getBoundingClientRect());
+    onToggleMenu();
+  }
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function reposition() {
+      const ref = desktopBtnRef.current?.offsetParent ? desktopBtnRef : mobileBtnRef;
+      if (ref.current) setRect(ref.current.getBoundingClientRect());
+    }
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => { window.removeEventListener("scroll", reposition, true); window.removeEventListener("resize", reposition); };
+  }, [menuOpen]);
 
   useEffect(() => {
     if (!menuOpen) return;
     function onDocClick(e: MouseEvent) {
       const target = e.target as Node;
-      const insideDesktop = menuRef.current?.contains(target);
-      const insideMobile = mobileMenuRef.current?.contains(target);
-      if (!insideDesktop && !insideMobile) onCloseMenu();
+      const insideDesktop = desktopBtnRef.current?.contains(target);
+      const insideMobile = mobileBtnRef.current?.contains(target);
+      const insidePanel = panelRef.current?.contains(target);
+      if (!insideDesktop && !insideMobile && !insidePanel) onCloseMenu();
     }
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") onCloseMenu(); }
     document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDocClick); document.removeEventListener("keydown", onKey); };
   }, [menuOpen, onCloseMenu]);
+
+  // Recomputed on every render from `rect` so it stays correct after scroll/resize.
+  const PANEL_W = 208; // w-52
+  const PANEL_H = 230; // 6 menu items + divider
+  const panelStyle: React.CSSProperties = rect ? (() => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const rawLeft = rect.right - PANEL_W;
+    const left = Math.max(8, Math.min(rawLeft, vw - PANEL_W - 8));
+    const openUp = rect.bottom + PANEL_H + 8 > vh && rect.top > PANEL_H + 8;
+    return {
+      position: "fixed" as const,
+      left,
+      zIndex: 10000,
+      ...(openUp
+        ? { bottom: vh - rect.top + 6 }
+        : { top: rect.bottom + 6 }),
+    };
+  })() : { display: "none" };
+
+  const menuContent = (
+    <>
+      <MenuItem icon={<Eye className="w-3.5 h-3.5" />} label="View Details" onClick={onView} />
+      <MenuItem icon={<Pencil className="w-3.5 h-3.5" />} label="Edit" onClick={onEdit} />
+      <MenuItem icon={<ShieldAlert className="w-3.5 h-3.5" />} label="Driver Verification" href="/dashboard/verification" disabled={s.driver_match !== "mismatch"} />
+      <MenuItem icon={<Receipt className="w-3.5 h-3.5" />} label="Generate Receipt" onClick={onReceipt} disabled={s.status !== "released"} />
+      <MenuItem icon={<ShieldX className="w-3.5 h-3.5" />} label="Force Checkout" href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`} disabled={!isActive} danger />
+      <div className="my-1 border-t border-gray-100 dark:border-slate-800" />
+      <MenuItem icon={<Trash2 className="w-3.5 h-3.5" />} label="Delete" onClick={onDelete} danger />
+    </>
+  );
 
   return (
     <motion.div
@@ -1191,30 +1248,11 @@ function TruckRow({
             </Link>
           )}
 
-          <div className="relative" ref={menuRef}>
-            <button onClick={onToggleMenu}
+          <div className="relative">
+            <button ref={desktopBtnRef} onClick={() => openFrom(desktopBtnRef)}
               className="p-1.5 text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition">
               <MoreVertical className="w-4 h-4" />
             </button>
-            <AnimatePresence>
-              {menuOpen && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95, y: -4 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                  transition={{ duration: 0.12 }}
-                  className="absolute right-0 top-full mt-1 w-52 bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl shadow-xl z-20 py-1.5 overflow-hidden"
-                >
-                  <MenuItem icon={<Eye className="w-3.5 h-3.5" />} label="View Details" onClick={onView} />
-                  <MenuItem icon={<Pencil className="w-3.5 h-3.5" />} label="Edit" onClick={onEdit} />
-                  <MenuItem icon={<ShieldAlert className="w-3.5 h-3.5" />} label="Driver Verification" href="/dashboard/verification" disabled={s.driver_match !== "mismatch"} />
-                  <MenuItem icon={<Receipt className="w-3.5 h-3.5" />} label="Generate Receipt" onClick={onReceipt} disabled={s.status !== "released"} />
-                  <MenuItem icon={<ShieldX className="w-3.5 h-3.5" />} label="Force Checkout" href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`} disabled={!isActive} danger />
-                  <div className="my-1 border-t border-gray-100 dark:border-slate-800" />
-                  <MenuItem icon={<Trash2 className="w-3.5 h-3.5" />} label="Delete" onClick={onDelete} danger />
-                </motion.div>
-              )}
-            </AnimatePresence>
           </div>
         </div>
       </div>
@@ -1250,33 +1288,31 @@ function TruckRow({
             {(key === "checkedout" || key === "forced") && <button onClick={onReceipt} className="flex items-center gap-1 bg-slate-700 text-white text-xs font-bold px-3 py-2 rounded-xl transition"><Receipt className="w-3 h-3" />Receipt</button>}
             {key === "verification" && <Link href="/dashboard/verification" className="flex items-center gap-1 bg-rose-600 text-white text-xs font-bold px-3 py-2 rounded-xl transition"><ShieldAlert className="w-3 h-3" />Verify</Link>}
 
-            <div className="relative" ref={mobileMenuRef}>
-              <button onClick={onToggleMenu} className="p-2 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition">
+            <div className="relative">
+              <button ref={mobileBtnRef} onClick={() => openFrom(mobileBtnRef)} className="p-2 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition">
                 <MoreVertical className="w-4 h-4" />
               </button>
-              <AnimatePresence>
-                {menuOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95, y: -4 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                    transition={{ duration: 0.12 }}
-                    className="absolute right-0 bottom-full mb-1 w-52 bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl shadow-xl z-20 py-1.5 overflow-hidden"
-                  >
-                    <MenuItem icon={<Eye className="w-3.5 h-3.5" />} label="View Details" onClick={onView} />
-                    <MenuItem icon={<Pencil className="w-3.5 h-3.5" />} label="Edit" onClick={onEdit} />
-                      <MenuItem icon={<ShieldAlert className="w-3.5 h-3.5" />} label="Driver Verification" href="/dashboard/verification" disabled={s.driver_match !== "mismatch"} />
-                    <MenuItem icon={<Receipt className="w-3.5 h-3.5" />} label="Generate Receipt" onClick={onReceipt} disabled={s.status !== "released"} />
-                    <MenuItem icon={<ShieldX className="w-3.5 h-3.5" />} label="Force Checkout" href={`/dashboard/check-out?truck=${encodeURIComponent(s.truckNumber)}`} disabled={!isActive} danger />
-                    <div className="my-1 border-t border-gray-100 dark:border-slate-800" />
-                    <MenuItem icon={<Trash2 className="w-3.5 h-3.5" />} label="Delete" onClick={onDelete} danger />
-                  </motion.div>
-                )}
-              </AnimatePresence>
             </div>
           </div>
         </div>
       </div>
+
+      {menuOpen && typeof window !== "undefined" && createPortal(
+        <AnimatePresence>
+          <motion.div
+            ref={panelRef}
+            style={panelStyle}
+            initial={{ opacity: 0, scale: 0.95, y: -4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: -4 }}
+            transition={{ duration: 0.12 }}
+            className="w-52 bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-xl shadow-xl overflow-hidden py-1.5"
+          >
+            {menuContent}
+          </motion.div>
+        </AnimatePresence>,
+        document.body
+      )}
 
       {/* Expansion panel */}
       <AnimatePresence>
