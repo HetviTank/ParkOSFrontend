@@ -79,8 +79,13 @@ export default function Sidebar({
   collapsed?: boolean;
   onToggleCollapse?: () => void;
 }) {
-  const pathname = usePathname();
-  const router   = useRouter();
+  const rawPathname = usePathname();
+  const router      = useRouter();
+  // Direct navigation on the raw GCS test host (storage.googleapis.com/<bucket>/...)
+  // requires an explicit "/index.html" and doesn't collapse a trailing slash,
+  // so the browser's real pathname can be e.g. "/dashboard/index.html" or
+  // "/dashboard/" instead of the clean "/dashboard" the nav config uses.
+  const pathname = rawPathname.replace(/\/index\.html$/, "").replace(/(?!^)\/$/, "");
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
@@ -188,6 +193,7 @@ export default function Sidebar({
                     <Link
                       href={item.href}
                       title={c ? item.label : undefined}
+                      onClick={onClose}
                       className={`group relative flex items-center gap-3 rounded-xl text-sm font-medium transition-all duration-150 ${
                         c ? "justify-center px-0 py-3" : "px-3 py-2.5"
                       } ${
@@ -245,6 +251,7 @@ export default function Sidebar({
                             <li key={child.label}>
                               <Link
                                 href={child.href}
+                                onClick={onClose}
                                 className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-all duration-150 ${
                                   childActive
                                     ? "bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-500/10 dark:text-indigo-300"

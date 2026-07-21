@@ -238,7 +238,6 @@ export default function DivisionsPage() {
   const [newBusy,   setNewBusy]   = useState(false);
   const [newOk,     setNewOk]     = useState(false);
 
-  const formRef = useRef<HTMLDivElement>(null);
 
   // load system relaxation hours
   useEffect(() => {
@@ -416,14 +415,6 @@ export default function DivisionsPage() {
     finally { setNewBusy(false); }
   }
 
-  // click-outside close add form
-  useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (addOpen && formRef.current && !formRef.current.contains(e.target as Node)) setAddOpen(false);
-    };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, [addOpen]);
 
   const selectedLoc = locations.find(l => l.id === selLoc);
 
@@ -477,7 +468,7 @@ export default function DivisionsPage() {
 
       {/* Add division form — shown at top when button clicked */}
       {addOpen && (
-        <div ref={formRef} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center">
