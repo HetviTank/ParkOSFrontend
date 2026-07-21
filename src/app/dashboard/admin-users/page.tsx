@@ -371,9 +371,15 @@ export default function AdminUsersPage() {
                   </td>
                   <td className="px-4 py-3.5">
                     <div className="flex items-center justify-end gap-1">
-                      <IconBtn title="Edit user"       color="blue"  onClick={() => openEdit(u)}><Pencil className="w-3.5 h-3.5" /></IconBtn>
-                      <IconBtn title="Reset password"  color="amber" onClick={() => { setPwdTarget(u); setNewPwd(""); setPwdError(""); setShowNewPwd(false); }}><Key className="w-3.5 h-3.5" /></IconBtn>
-                      <IconBtn title="Delete user"     color="red"   onClick={() => { setDelTarget(u); setDelError(""); }}><Trash2 className="w-3.5 h-3.5" /></IconBtn>
+                      {u.role?.name === "Super Admin" ? (
+                        <span className="text-xs text-gray-300 italic pr-2">Protected</span>
+                      ) : (
+                        <>
+                          <IconBtn title="Edit user"       color="blue"  onClick={() => openEdit(u)}><Pencil className="w-3.5 h-3.5" /></IconBtn>
+                          <IconBtn title="Reset password"  color="amber" onClick={() => { setPwdTarget(u); setNewPwd(""); setPwdError(""); setShowNewPwd(false); }}><Key className="w-3.5 h-3.5" /></IconBtn>
+                          <IconBtn title="Delete user"     color="red"   onClick={() => { setDelTarget(u); setDelError(""); }}><Trash2 className="w-3.5 h-3.5" /></IconBtn>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -416,9 +422,15 @@ export default function AdminUsersPage() {
                           <p className="text-xs text-gray-400 truncate mt-0.5">{u.email}</p>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
-                          <IconBtn title="Edit" color="blue" onClick={() => openEdit(u)}><Pencil className="w-3.5 h-3.5" /></IconBtn>
-                          <IconBtn title="Reset password" color="amber" onClick={() => { setPwdTarget(u); setNewPwd(""); setPwdError(""); setShowNewPwd(false); }}><Key className="w-3.5 h-3.5" /></IconBtn>
-                          <IconBtn title="Delete" color="red" onClick={() => { setDelTarget(u); setDelError(""); }}><Trash2 className="w-3.5 h-3.5" /></IconBtn>
+                          {u.role?.name === "Super Admin" ? (
+                            <span className="text-xs text-gray-300 italic">Protected</span>
+                          ) : (
+                            <>
+                              <IconBtn title="Edit" color="blue" onClick={() => openEdit(u)}><Pencil className="w-3.5 h-3.5" /></IconBtn>
+                              <IconBtn title="Reset password" color="amber" onClick={() => { setPwdTarget(u); setNewPwd(""); setPwdError(""); setShowNewPwd(false); }}><Key className="w-3.5 h-3.5" /></IconBtn>
+                              <IconBtn title="Delete" color="red" onClick={() => { setDelTarget(u); setDelError(""); }}><Trash2 className="w-3.5 h-3.5" /></IconBtn>
+                            </>
+                          )}
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-1.5 mt-2">
