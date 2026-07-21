@@ -9,8 +9,12 @@ import { useCallback, useLayoutEffect, useState } from "react";
 export function handleUnauthorized() {
   if (typeof window === "undefined") return;
   localStorage.clear();
-  if (!window.location.pathname.startsWith("/login")) {
-    window.location.href = "/login";
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  if (!window.location.pathname.startsWith(`${basePath}/login`)) {
+    // trailing "index.html" so this also resolves on hosts (e.g. the raw
+    // storage.googleapis.com/<bucket>/ test URL) that don't auto-resolve a
+    // bare trailing-slash path to its index.html.
+    window.location.href = `${basePath}/login/index.html`;
   }
 }
 

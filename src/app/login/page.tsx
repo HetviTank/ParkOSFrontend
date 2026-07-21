@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Eye,
   EyeOff,
@@ -249,6 +250,7 @@ function SubmitButton({
 
 /* ──────────────────────────────── Login form ──────────────────────────────── */
 function LoginForm({ onForgot }: { onForgot: () => void }) {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -274,7 +276,7 @@ function LoginForm({ onForgot }: { onForgot: () => void }) {
         "user",
         JSON.stringify({ id: data.id, name: data.name, email: data.email, location_id: data.location_id, role: data.role })
       );
-      window.location.href = "/dashboard";
+      router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed.");
     } finally {
