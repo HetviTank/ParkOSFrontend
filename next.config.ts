@@ -8,6 +8,12 @@ const nextConfig: NextConfig = {
   // request (e.g. /dashboard/) — without this, export emits flat dashboard.html
   // files that GCS can never reach via a clean /dashboard URL.
   trailingSlash: true,
+  // TEMPORARY, for testing via https://storage.googleapis.com/www.parkos.space/...
+  // — that URL serves the bucket name as a path segment, so every asset/page
+  // path must include it too. This MUST be removed once the real custom
+  // domain (www.parkos.space, via DNS CNAME) is live, or that domain will look
+  // for assets under /www.parkos.space/www.parkos.space/... and 404.
+  basePath: "/www.parkos.space",
 };
 
 export default nextConfig;
