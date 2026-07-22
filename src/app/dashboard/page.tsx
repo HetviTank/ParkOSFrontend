@@ -17,12 +17,10 @@ import type {
   DashboardResponse, SlotMapDivision,
   WeeklyRevenueItem, PaymentSplit, LiveAlertItem,
 } from "@/types/dashboard";
-import { useTheme } from "@/components/ThemeProvider";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { LocationSelect, type LocationOption } from "@/components/ui/LocationSelect";
 import { useLocationFilter } from "@/lib/auth";
 
@@ -263,8 +261,6 @@ export default function DashboardPage() {
                     </span>
                   )}
                 </a>
-
-                <ThemeToggle />
 
                 <div
                   title={user.role.name}
@@ -730,10 +726,9 @@ function LiveAlertsCard({ alerts }: { alerts: LiveAlertItem[] }) {
 
 // ── Weekly Revenue Chart ──────────────────────────────────────────────────────
 function WeeklyRevenueCard({ data }: { data: WeeklyRevenueItem[] }) {
-  const { theme } = useTheme();
-  const gridColor = theme === "dark" ? "#1e293b" : "#eef2f7";
-  const tickColor = theme === "dark" ? "#64748b" : "#9ca3af";
-  const cursorFill = theme === "dark" ? "#1e293b" : "#f8fafc";
+  const gridColor = "#eef2f7";
+  const tickColor = "#9ca3af";
+  const cursorFill = "#f8fafc";
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const CustomTooltip = ({ active, payload, label }: any) => {
