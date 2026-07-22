@@ -21,11 +21,12 @@ import {
 import { authApi } from "@/lib/api";
 import { BrandMark } from "@/components/ui/BrandMark";
 
-type View = "login" | "forgot" | "otp";
+type View = "login" | "forgot" | "otp" | "reset";
 
 export default function LoginPage() {
-  const [view, setView] = useState<View>("login");
+  const [view, setView]           = useState<View>("login");
   const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotOtp, setForgotOtp]     = useState("");
 
   return (
     <div className="min-h-screen flex bg-slate-50">
@@ -40,13 +41,24 @@ export default function LoginPage() {
             {view === "forgot" && (
               <ForgotPasswordForm
                 onBack={() => setView("login")}
-                onNext={(email) => {
-                  setForgotEmail(email);
-                  setView("otp");
-                }}
+                onNext={(email) => { setForgotEmail(email); setView("otp"); }}
               />
             )}
-            {view === "otp" && <OtpForm email={forgotEmail} onBack={() => setView("forgot")} />}
+            {view === "otp" && (
+              <OtpVerifyForm
+                email={forgotEmail}
+                onBack={() => setView("forgot")}
+                onNext={(otp) => { setForgotOtp(otp); setView("reset"); }}
+              />
+            )}
+            {view === "reset" && (
+              <ResetPasswordForm
+                email={forgotEmail}
+                otp={forgotOtp}
+                onBack={() => setView("otp")}
+                onDone={() => setView("login")}
+              />
+            )}
           </div>
           <p className="mt-6 text-center text-xs text-gray-400">
             © 2026 ParkOS • Smart Parking Management
@@ -460,31 +472,118 @@ function ForgotPasswordForm({
   );
 }
 
-/* ──────────────────────────────── OTP / Reset form ──────────────────────────── */
-function OtpForm({ email: initialEmail, onBack }: { email: string; onBack: () => void }) {
-  const [email, setEmail] = useState(initialEmail);
-  const [otp, setOtp] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPw, setConfirmPw] = useState("");
-  const [showPw, setShowPw] = useState(false);
+/* ──────────────────────────────── Step 2: OTP verify ──────────────────────────── */
+function OtpVerifyForm({
+  email,
+  onBack,
+  onNext,
+}: {
+  email: string;
+  onBack: () => void;
+  onNext: (otp: string) => void;
+}) {
+  const [otp, setOtp]       = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState(false);
+  const [error, setError]   = useState("");
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError("");
-    if (password !== confirmPw) {
-      setError("Passwords do not match.");
+    if (otp.length !== 6) {
+      setError("Please enter the 6-digit OTP sent to your email.");
       return;
     }
-    if (otp.length !== 6) {
-      setError("OTP must be exactly 6 digits.");
+    setLoading(true);
+    try {
+      await authApi.verifyOtp({ email, otp });
+      onNext(otp);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid OTP. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div>
+      <button
+        onClick={onBack}
+        className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 mb-8 transition"
+      >
+        <ChevronLeft className="w-4 h-4" />
+        Back
+      </button>
+
+      <div className="mb-8">
+        <div className="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center mb-5">
+          <Mail className="w-7 h-7 text-blue-600" />
+        </div>
+        <h2 className="text-3xl font-bold text-gray-900">Check your email</h2>
+        <p className="mt-2 text-gray-500">
+          We sent a 6-digit OTP to <span className="font-medium text-gray-700">{email}</span>. Enter it below.
+        </p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">6-digit OTP</label>
+          <input
+            type="text"
+            inputMode="numeric"
+            maxLength={6}
+            value={otp}
+            onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+            required
+            placeholder="······"
+            className="w-full px-4 py-4 rounded-xl border border-gray-200 bg-gray-50 text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500/60 focus:border-transparent focus:bg-white transition-all tracking-[0.6em] font-mono text-center text-2xl"
+          />
+        </div>
+
+        {error && <ErrorAlert>{error}</ErrorAlert>}
+
+        <SubmitButton loading={loading} loadingLabel="Verifying…">
+          Verify OTP
+          <ArrowRight className="w-4.5 h-4.5" />
+        </SubmitButton>
+      </form>
+    </div>
+  );
+}
+
+/* ──────────────────────────────── Step 3: New password ──────────────────────────── */
+function ResetPasswordForm({
+  email,
+  otp,
+  onBack,
+  onDone,
+}: {
+  email: string;
+  otp: string;
+  onBack: () => void;
+  onDone: () => void;
+}) {
+  const [password, setPassword]   = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [showPw, setShowPw]       = useState(false);
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState("");
+  const [success, setSuccess]     = useState(false);
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError("");
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+    if (password !== confirmPw) {
+      setError("Passwords do not match.");
       return;
     }
     setLoading(true);
     try {
       await authApi.confirmForgotPassword({ email, otp, password });
+      localStorage.clear();
       setSuccess(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reset password.");
@@ -500,11 +599,9 @@ function OtpForm({ email: initialEmail, onBack }: { email: string; onBack: () =>
           <CheckCircle2 className="w-8 h-8 text-emerald-600" />
         </div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Password reset!</h2>
-        <p className="text-gray-500 mb-8">
-          Your password has been updated. You can now sign in.
-        </p>
+        <p className="text-gray-500 mb-8">Your password has been updated. You can now sign in.</p>
         <button
-          onClick={onBack}
+          onClick={onDone}
           className="w-full bg-gradient-to-r from-blue-600 to-emerald-500 hover:from-blue-700 hover:to-emerald-600 text-white font-semibold py-3 rounded-xl transition-all shadow-lg shadow-blue-600/20"
         >
           Back to login
@@ -527,50 +624,13 @@ function OtpForm({ email: initialEmail, onBack }: { email: string; onBack: () =>
         <div className="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center mb-5">
           <Lock className="w-7 h-7 text-blue-600" />
         </div>
-        <h2 className="text-3xl font-bold text-gray-900">Reset password</h2>
-        <p className="mt-2 text-gray-500">
-          Enter the OTP sent to your email and choose a new password.
-        </p>
+        <h2 className="text-3xl font-bold text-gray-900">Set new password</h2>
+        <p className="mt-2 text-gray-500">Choose a strong password for your account.</p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            Email address
-          </label>
-          <div className="relative">
-            <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-gray-400" />
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              placeholder="you@example.com"
-              className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/60 focus:border-transparent focus:bg-white transition-all"
-            />
-          </div>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            6-digit OTP
-          </label>
-          <input
-            type="text"
-            inputMode="numeric"
-            maxLength={6}
-            value={otp}
-            onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
-            required
-            placeholder="123456"
-            className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/60 focus:border-transparent focus:bg-white transition-all tracking-[0.5em] font-mono text-center text-lg"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            New password
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">New password</label>
           <div className="relative">
             <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-gray-400" />
             <input
@@ -592,9 +652,7 @@ function OtpForm({ email: initialEmail, onBack }: { email: string; onBack: () =>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            Confirm new password
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">Confirm new password</label>
           <div className="relative">
             <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-gray-400" />
             <input

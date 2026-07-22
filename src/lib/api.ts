@@ -13,7 +13,8 @@ async function request<T>(
     ...options,
   });
 
-  if (res.status === 401 && path !== "/login") {
+  const authPaths = ["/login", "/forgot-password", "/verify-otp"];
+  if (res.status === 401 && !authPaths.includes(path)) {
     handleUnauthorized();
     throw new Error("Your session has expired. Redirecting to login…");
   }
@@ -36,6 +37,12 @@ export const authApi = {
 
   forgotPassword: (body: ForgotPasswordRequest) =>
     request<{ message: string }>("/forgot-password", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  verifyOtp: (body: { email: string; otp: string }) =>
+    request<{ message: string }>("/verify-otp", {
       method: "POST",
       body: JSON.stringify(body),
     }),
