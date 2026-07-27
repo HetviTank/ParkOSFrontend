@@ -19,7 +19,7 @@ steps:
     args:
       - '-c'
       - |
-        gcloud storage rsync -r --delete-unmatched-destination-objects ./out gs://parkos.space
+        gcloud storage rsync -r -d ./out gs://parkos.space
 
   # 2. Configure bucket website pages, permissions, and cache headers
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -33,9 +33,9 @@ steps:
         # Make objects publicly readable
         gcloud storage buckets add-iam-policy-binding gs://parkos.space --member=allUsers --role=roles/storage.objectViewer
 
-        # Set cache controls
-        gcloud storage objects update "gs://parkos.space/_next/**" --cache-control="public,max-age=31536000,immutable" || true
-        gcloud storage objects update "gs://parkos.space/*.html" --cache-control="no-cache,no-store,must-revalidate" || true
+        # Set cache controls (gcloud storage automatically detects content-type MIME types)
+        gcloud storage objects update "gs://parkos.space/_next/static/**" --cache-control="public,max-age=31536000,immutable"
+        gcloud storage objects update "gs://parkos.space/**/*.html" --cache-control="no-cache,no-store,must-revalidate"
 
 options:
   logging: CLOUD_LOGGING_ONLY
