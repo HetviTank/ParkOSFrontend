@@ -9,34 +9,33 @@ steps:
       - '-c'
       - |
         echo "Starting build for API: $$NEXT_PUBLIC_API_BASE_URL"
-
         npm run build
-
     env:
       - 'NEXT_PUBLIC_API_BASE_URL=${_NEXT_PUBLIC_API_BASE_URL}'
 
-  - name: 'gcr.io/cloud-builders/gsutil'
-    args:
-      - '-m'
-      - 'rsync'
-      - '-d'
-      - '-r'
-      - './out'
-      - 'gs://www.parkos.space'
-
-  - name: 'gcr.io/cloud-builders/gsutil'
+  # 1. Sync built files to your parkos.space bucket
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        gsutil web set -m index.html -e 404.html gs://www.parkos.space
-        gsutil iam ch allUsers:objectViewer gs://www.parkos.space
+        gcloud storage rsync -r -d ./out gs://parkos.space
 
-        # gsutil does not support ** globs — use ls -r with loops instead
-        gsutil ls -r gs://www.parkos.space/_next/static/ | grep '\.js$' | xargs -I{} gsutil setmeta -h "Content-Type:application/javascript" {}
-        gsutil ls -r gs://www.parkos.space/_next/static/ | grep '\.css$' | xargs -I{} gsutil setmeta -h "Content-Type:text/css" {}
-        gsutil ls -r gs://www.parkos.space/_next/static/ | grep -v ':$' | xargs -I{} gsutil setmeta -h "Cache-Control:public,max-age=31536000,immutable" {}
-        gsutil ls -r gs://www.parkos.space/ | grep '\.html$' | xargs -I{} gsutil setmeta -h "Cache-Control:no-cache,no-store,must-revalidate" {}
+  # 2. Configure bucket website pages, permissions, and cache headers
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Set main page and 404 page
+        gcloud storage buckets update gs://parkos.space --web-main-page-suffix=index.html --web-error-page=404.html
+
+        # Make objects publicly readable
+        gcloud storage buckets add-iam-policy-binding gs://parkos.space --member=allUsers --role=roles/storage.objectViewer
+
+        # Set cache controls (gcloud storage automatically detects content-type MIME types)
+        gcloud storage objects update "gs://parkos.space/_next/static/**" --cache-control="public,max-age=31536000,immutable"
+        gcloud storage objects update "gs://parkos.space/**/*.html" --cache-control="no-cache,no-store,must-revalidate"
 
 options:
   logging: CLOUD_LOGGING_ONLY
