@@ -16,12 +16,20 @@ import { Overlay } from "@/components/ui/Overlay";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
+import { LocationSelect } from "@/components/ui/LocationSelect";
 
-import { handleUnauthorized } from "@/lib/auth";
+import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 const PAGE_SIZE = 10;
 const RECENT_CAP = 100;
+// Blacklist entries carry no location of their own on the backend — a truck
+// number can be restricted before it ever checks in anywhere. We resolve each
+// entry's location best-effort from its truck's most recent parking session,
+// and fetch a larger batch client-side (like the date-range filter) so a
+// location filter can be applied in the browser instead of via the API.
+const LOCATION_FILTER_CAP = 300;
+const EXPORT_CAP = 2000;
 
 function getToken() {
   return typeof window !== "undefined" ? localStorage.getItem("token") ?? "" : "";
@@ -53,10 +61,15 @@ interface Blacklist {
 interface AdminUser { id: string; name: string; full_name?: string }
 interface TruckData { id: string; truck_number: string; truck_type: string; owner_id: string | null }
 interface OwnerData { id: string; name: string; company: string | null; primary_mobile: string }
+interface LocData { id: string; name: string; city: string | null }
+interface SessionData { id: string; truck_id: string; location_id: string | null; check_in_time: string }
 interface Enriched extends Blacklist {
   truckType: string | null;
   ownerName: string | null; ownerCompany: string | null; ownerMobile: string | null;
   addedByName: string;
+  // null = could not be resolved (e.g. truck never checked in anywhere) —
+  // treated as "unknown location" and always shown, never hidden by a filter.
+  locationId: string | null; locationName: string | null;
 }
 
 // ── formatters ────────────────────────────────────────────────────────────────
@@ -282,12 +295,16 @@ export default function BlacklistPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"" | "active" | "inactive">("");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const { isAdmin, locationId, setLocationId } = useLocationFilter();
+  const [locations, setLocations] = useState<LocData[]>([]);
 
   const [kpi, setKpi] = useState({ total: 0, active: 0, addedToday: 0, weekly: [0, 0, 0, 0, 0, 0, 0] });
   const [removedTodaySession, setRemovedTodaySession] = useState(0);
@@ -330,6 +347,8 @@ export default function BlacklistPage() {
   const tCache = useRef<Record<string, TruckData>>({});
   const oCache = useRef<Record<string, OwnerData>>({});
   const aCache = useRef<Record<string, string>>({});
+  const lCache = useRef<Record<string, LocData>>({});
+  const truckLocCache = useRef<Record<string, string | null>>({});
 
   const toastSeq = useRef(0);
   function pushToast(kind: Toast["kind"], message: string) {
@@ -372,10 +391,35 @@ export default function BlacklistPage() {
     return o;
   }, []);
 
+  // Blacklist has no location of its own — best-effort resolve it from the
+  // truck's most recent parking session. Returns null (unknown) if the truck
+  // was never checked in anywhere, or isn't a registered truck at all.
+  const resolveTruckLocation = useCallback(async (truckId: string | null): Promise<{ id: string | null; name: string | null }> => {
+    if (!truckId) return { id: null, name: null };
+    if (truckId in truckLocCache.current) {
+      const cachedId = truckLocCache.current[truckId];
+      return { id: cachedId, name: cachedId ? (lCache.current[cachedId]?.name ?? null) : null };
+    }
+    const sessions = await apiFetch<{ list: SessionData[] }>(
+      `/parking-sessions?truck_id=${truckId}&start=0&limit=1&sort_by=check_in_time&order=desc`
+    ).catch(() => ({ list: [] as SessionData[] }));
+    const locId = sessions.list?.[0]?.location_id ?? null;
+    truckLocCache.current[truckId] = locId;
+    if (!locId) return { id: null, name: null };
+    if (!lCache.current[locId]) {
+      const loc = await apiFetch<LocData>(`/locations/${locId}`).catch(() => null);
+      if (loc) lCache.current[locId] = loc;
+    }
+    return { id: locId, name: lCache.current[locId]?.name ?? null };
+  }, []);
+
   const enrich = useCallback(async (items: Blacklist[]): Promise<Enriched[]> => {
     return Promise.all(items.map(async b => {
       const [truck, addedByName] = await Promise.all([resolveTruck(b), resolveAdminName(b.added_by)]);
-      const owner = truck?.owner_id ? await resolveOwner(truck.owner_id) : null;
+      const [owner, loc] = await Promise.all([
+        truck?.owner_id ? resolveOwner(truck.owner_id) : Promise.resolve(null),
+        resolveTruckLocation(truck?.id ?? null),
+      ]);
       return {
         ...b,
         truckType: truck?.truck_type ?? null,
@@ -383,32 +427,50 @@ export default function BlacklistPage() {
         ownerCompany: owner?.company ?? null,
         ownerMobile: owner?.primary_mobile ?? null,
         addedByName,
+        locationId: loc.id,
+        locationName: loc.name,
       };
     }));
-  }, [resolveTruck, resolveAdminName, resolveOwner]);
+  }, [resolveTruck, resolveAdminName, resolveOwner, resolveTruckLocation]);
 
   useEffect(() => {
     const t = setTimeout(() => { setSearch(searchInput); setPage(1); }, 500);
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const fetchList = useCallback(async (p: number, q: string, status: typeof statusFilter, ord: typeof sortOrder) => {
+  const fetchList = useCallback(async (p: number, q: string, status: typeof statusFilter, ord: typeof sortOrder, locId: string) => {
     setLoading(true); setListError("");
     try {
-      const start = (p - 1) * PAGE_SIZE;
-      let url = `/blacklists?start=${start}&limit=${PAGE_SIZE}&sort_by=created_at&order=${ord}`;
+      // The backend has no location concept for blacklist entries, so a
+      // location filter can't be pushed down as a query param — instead we
+      // pull a larger batch and filter/paginate it here in the browser.
+      const locationFiltering = !!locId;
+      const start = locationFiltering ? 0 : (p - 1) * PAGE_SIZE;
+      const limit = locationFiltering ? LOCATION_FILTER_CAP : PAGE_SIZE;
+      let url = `/blacklists?start=${start}&limit=${limit}&sort_by=created_at&order=${ord}`;
       if (q) url += `&search=${encodeURIComponent(q)}`;
       if (status) url += `&is_active=${status === "active"}`;
       const data = await apiFetch<{ count: number; list: Blacklist[] }>(url);
-      const enriched = await enrich(data.list ?? []);
+      let enriched = await enrich(data.list ?? []);
+      let count = data.count ?? 0;
+
+      if (locationFiltering) {
+        // Entries whose location couldn't be resolved are always kept —
+        // hiding a real restriction because we can't place it is worse than
+        // showing one that might not apply to this site.
+        enriched = enriched.filter(e => e.locationId === locId || e.locationId == null);
+        count = enriched.length;
+        enriched = enriched.slice((p - 1) * PAGE_SIZE, (p - 1) * PAGE_SIZE + PAGE_SIZE);
+      }
+
       setList(enriched);
-      setTotal(data.count ?? 0);
+      setTotal(count);
     } catch (err) {
       setListError(err instanceof Error ? err.message : "Failed to load blacklist.");
     } finally { setLoading(false); }
   }, [enrich]);
 
-  useEffect(() => { fetchList(page, search, statusFilter, sortOrder); }, [page, search, statusFilter, sortOrder, fetchList]);
+  useEffect(() => { fetchList(page, search, statusFilter, sortOrder, locationId); }, [page, search, statusFilter, sortOrder, locationId, fetchList]);
 
   const fetchKpis = useCallback(async () => {
     try {
@@ -434,13 +496,17 @@ export default function BlacklistPage() {
 
   useEffect(() => { fetchKpis(); }, [fetchKpis]);
 
+  useEffect(() => {
+    apiFetch<{ list: LocData[] }>("/locations?limit=100&start=0").then(r => setLocations(r.list ?? [])).catch(() => {});
+  }, []);
+
   const refreshAll = useCallback(() => {
-    fetchList(page, search, statusFilter, sortOrder);
+    fetchList(page, search, statusFilter, sortOrder, locationId);
     fetchKpis();
-  }, [fetchList, page, search, statusFilter, sortOrder, fetchKpis]);
+  }, [fetchList, page, search, statusFilter, sortOrder, locationId, fetchKpis]);
 
   function clearFilters() {
-    setSearchInput(""); setSearch(""); setStatusFilter(""); setPage(1);
+    setSearchInput(""); setSearch(""); setStatusFilter(""); setLocationId(""); setPage(1);
   }
 
   // ── add form autocomplete ──
@@ -490,7 +556,7 @@ export default function BlacklistPage() {
       setTimeout(() => setFSuccess(false), 2500);
       resetForm();
       setPage(1);
-      fetchList(1, search, statusFilter, sortOrder);
+      fetchList(1, search, statusFilter, sortOrder, locationId);
       fetchKpis();
     } catch (err) {
       setFError(err instanceof Error ? err.message : "Failed to add to blacklist.");
@@ -565,17 +631,35 @@ export default function BlacklistPage() {
 
   function openDetails(item: Enriched) { setDetailItem(item); setMenuId(null); }
 
-  function exportCSV() {
-    if (!list.length) return;
-    const headers = ["Truck Number", "Owner", "Reason", "Added By", "Added On", "Status"];
-    const rows = list.map(b => [b.truck_number, b.ownerName ?? "—", b.reason, b.addedByName, fmtDateTime(b.created_at), b.is_active ? "Active" : "Inactive"]);
-    const csv = [headers, ...rows].map(r => r.map(c => `"${c}"`).join(",")).join("\n");
-    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv]));
-    a.download = `parkos-blacklist-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+  // Re-fetches every entry matching the *current filters* (not just the
+  // loaded page) so the CSV always matches what the on-screen list would
+  // show if you paged all the way through it, instead of only the 10 rows
+  // currently rendered.
+  async function exportCSV() {
+    setExporting(true);
+    try {
+      const limit = locationId ? LOCATION_FILTER_CAP : EXPORT_CAP;
+      let url = `/blacklists?start=0&limit=${limit}&sort_by=created_at&order=${sortOrder}`;
+      if (search) url += `&search=${encodeURIComponent(search)}`;
+      if (statusFilter) url += `&is_active=${statusFilter === "active"}`;
+      const data = await apiFetch<{ count: number; list: Blacklist[] }>(url);
+      let enriched = await enrich(data.list ?? []);
+      if (locationId) enriched = enriched.filter(e => e.locationId === locationId || e.locationId == null);
+
+      const headers = ["Truck Number", "Owner", "Location", "Reason", "Added By", "Added On", "Status"];
+      const rows = enriched.map(b => [
+        b.truck_number, b.ownerName ?? "—", b.locationName ?? "—", b.reason,
+        b.addedByName, fmtDateTime(b.created_at), b.is_active ? "Active" : "Inactive",
+      ]);
+      const csv = [headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      a.download = `parkos-blacklist-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    } catch { /* silent — button just stops spinning */ }
+    finally { setExporting(false); }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const filtersActive = !!(searchInput || statusFilter);
+  const filtersActive = !!(searchInput || statusFilter || (isAdmin && locationId));
   const activePercent = kpi.total ? (kpi.active / kpi.total) * 100 : 0;
 
   return (
@@ -603,9 +687,9 @@ export default function BlacklistPage() {
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             <span className="hidden sm:inline">Refresh</span>
           </button>
-          <button onClick={exportCSV} disabled={!list.length}
+          <button onClick={exportCSV} disabled={exporting || !total}
             className="flex items-center gap-2 bg-white/70 dark:bg-slate-800/60 border border-white/60 dark:border-slate-700/60 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm disabled:opacity-40">
-            <Download className="w-4 h-4" />
+            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
             <span className="hidden sm:inline">Export</span>
           </button>
           <button onClick={() => setActivityOpen(true)}
@@ -811,6 +895,15 @@ export default function BlacklistPage() {
                   </button>
                 )}
               </div>
+
+              <LocationSelect
+                className="w-full sm:w-auto"
+                value={locationId}
+                onChange={(v) => { setLocationId(v); setPage(1); }}
+                locations={locations}
+                allowAll={isAdmin}
+                locked={!isAdmin}
+              />
 
               <EnumFilterSelect
                 className="w-full sm:w-auto"

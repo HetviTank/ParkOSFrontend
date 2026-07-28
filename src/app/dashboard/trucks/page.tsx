@@ -27,6 +27,41 @@ import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 const PAGE_SIZE = 10;
 const DATE_FILTER_CAP = 500;
+const EXPORT_CAP = 2000;
+
+const DATE_PRESETS = [
+  { value: "all",        label: "All time" },
+  { value: "today",      label: "Today" },
+  { value: "this_week",  label: "This week" },
+  { value: "this_month", label: "This month" },
+  { value: "last_month", label: "Last month" },
+  { value: "custom",     label: "Custom range" },
+] as const;
+type DatePreset = typeof DATE_PRESETS[number]["value"];
+
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+// Maps a preset to concrete { from, to } YYYY-MM-DD strings for the existing
+// client-side check_in_time filter — custom keeps whatever the user picked.
+function presetToRange(preset: DatePreset, customFrom: string, customTo: string): { from: string; to: string } {
+  const now = new Date();
+  if (preset === "today") { const s = ymd(now); return { from: s, to: s }; }
+  if (preset === "this_week") {
+    const day = now.getDay();
+    const diff = day === 0 ? 6 : day - 1;
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diff);
+    return { from: ymd(start), to: ymd(now) };
+  }
+  if (preset === "this_month") return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: ymd(now) };
+  if (preset === "last_month") {
+    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const end   = new Date(now.getFullYear(), now.getMonth(), 0);
+    return { from: ymd(start), to: ymd(end) };
+  }
+  if (preset === "custom") return { from: customFrom, to: customTo };
+  return { from: "", to: "" };
+}
 
 function getToken() {
   return typeof window !== "undefined" ? localStorage.getItem("token") ?? "" : "";
@@ -327,6 +362,7 @@ export default function AllTrucksPage() {
   const [page,      setPage]      = useState(1);
   const [loading,   setLoading]   = useState(false);
   const [listError, setListError] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   // Non-admin roles are locked to their assigned location — no "All locations" escape hatch.
   const { isAdmin, locationId: locationFilter, setLocationId: setLocationFilter } = useLocationFilter();
@@ -341,8 +377,13 @@ export default function AllTrucksPage() {
   const [searchLoading, setSearchLoading]   = useState(false);
 
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo,   setDateTo]   = useState("");
+  const [datePreset, setDatePreset] = useState<DatePreset>("all");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo,   setCustomTo]   = useState("");
+  const { from: dateFrom, to: dateTo } = useMemo(
+    () => presetToRange(datePreset, customFrom, customTo),
+    [datePreset, customFrom, customTo]
+  );
 
   const [locations,     setLocations]     = useState<LocData[]>([]);
   const [overdueRules,  setOverdueRules]  = useState<OverdueRule[]>([]);
@@ -513,7 +554,7 @@ export default function AllTrucksPage() {
 
   function clearFilters() {
     setSearchInput(""); setLocationFilter(""); setStatusFilter(""); setTypeFilter("");
-    setTruckIdFilter(""); setTruckSearch(""); setDateFrom(""); setDateTo(""); setPage(1);
+    setTruckIdFilter(""); setTruckSearch(""); setDatePreset("all"); setCustomFrom(""); setCustomTo(""); setPage(1);
   }
 
   const avgParkingTime = useMemo(() => {
@@ -576,21 +617,49 @@ export default function AllTrucksPage() {
     }
   }
 
-  function exportCSV() {
-    if (!sessions.length) return;
-    const headers = ["Truck No","Type","Owner","Driver","Location","Division","Slot","Status","Entry Type","Check-in","Check-out","Days","Total (₹)"];
-    const rows = sessions.map(s => {
-      const key = deriveStatusKey(s);
-      return [
-        s.truckNumber, s.truckType, s.ownerName, s.checkin_driver_name,
-        s.locationName, s.divisionName, s.slotCode, statusLabel(key, s),
-        s.entry_type, fmtDateTime(s.check_in_time), fmtDateTime(s.check_out_time),
-        s.days ?? "", s.total_amount ?? "",
-      ];
-    });
-    const csv = [headers, ...rows].map(r => r.map(c => `"${c}"`).join(",")).join("\n");
-    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv]));
-    a.download = `parkos-trucks-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+  // Re-fetches every session matching the *current filters* (not just the
+  // loaded page) so the CSV always matches what the on-screen list would
+  // show if you paged all the way through it, instead of only the 10 rows
+  // currently rendered.
+  async function exportCSV() {
+    if (truckIdFilter === "__none__") return;
+    setExporting(true);
+    try {
+      const dateFiltering = !!(dateFrom || dateTo);
+      const limit = dateFiltering ? DATE_FILTER_CAP : EXPORT_CAP;
+      let url = `/parking-sessions?start=0&limit=${limit}&sort_by=check_in_time&order=${sortOrder}`;
+      if (truckIdFilter)  url += `&truck_id=${truckIdFilter}`;
+      if (locationFilter) url += `&location_id=${locationFilter}`;
+      if (statusFilter)   url += `&status=${statusFilter}`;
+      if (typeFilter)     url += `&entry_type=${typeFilter}`;
+      const data = await apiFetch<{ count: number; list: Session[] }>(url);
+      let list = data.list ?? [];
+
+      if (dateFiltering) {
+        const fromMs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : -Infinity;
+        const toMs   = dateTo   ? new Date(`${dateTo}T23:59:59`).getTime()   : Infinity;
+        list = list.filter(s => {
+          const t = new Date(s.check_in_time).getTime();
+          return t >= fromMs && t <= toMs;
+        });
+      }
+
+      const enriched = await enrich(list);
+      const headers = ["Truck No","Type","Owner","Driver","Location","Division","Slot","Status","Entry Type","Check-in","Check-out","Days","Total (₹)"];
+      const rows = enriched.map(s => {
+        const key = deriveStatusKey(s);
+        return [
+          s.truckNumber, s.truckType, s.ownerName, s.checkin_driver_name,
+          s.locationName, s.divisionName, s.slotCode, statusLabel(key, s),
+          s.entry_type, fmtDateTime(s.check_in_time), fmtDateTime(s.check_out_time),
+          s.days ?? "", s.total_amount ?? "",
+        ];
+      });
+      const csv = [headers, ...rows].map(r => r.map(c => `"${String(c ?? "")}"`).join(",")).join("\n");
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      a.download = `parkos-trucks-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    } catch { /* silent — button just stops spinning */ }
+    finally { setExporting(false); }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -629,10 +698,10 @@ export default function AllTrucksPage() {
           </button>
           <button
             onClick={exportCSV}
-            disabled={!sessions.length}
+            disabled={exporting || !total}
             className="flex items-center gap-2 bg-white/70 dark:bg-slate-800/60 border border-white/60 dark:border-slate-700/60 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm disabled:opacity-40"
           >
-            <Download className="w-4 h-4" />
+            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
             <span className="hidden sm:inline">Export CSV</span>
           </button>
           <Link
@@ -763,9 +832,9 @@ export default function AllTrucksPage() {
 
             <div className="flex-1 hidden lg:block" />
 
-            <button onClick={exportCSV} disabled={!sessions.length}
+            <button onClick={exportCSV} disabled={exporting || !total}
               className="flex-1 sm:flex-none flex items-center justify-center sm:justify-start gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl bg-gray-50 dark:bg-slate-800/60 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition disabled:opacity-40">
-              <Download className="w-3.5 h-3.5" />Export
+              {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}Export
             </button>
           </div>
         </div>
@@ -779,19 +848,49 @@ export default function AllTrucksPage() {
               transition={{ duration: 0.2 }}
               className="overflow-hidden"
             >
-              <div className="pt-3 mt-3 border-t border-gray-100 dark:border-slate-800 flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 dark:text-slate-400">
-                  <CalendarClock className="w-3.5 h-3.5" />Check-in date range
+              <div className="pt-3 mt-3 border-t border-gray-100 dark:border-slate-800 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 dark:text-slate-400 shrink-0">
+                    <CalendarClock className="w-3.5 h-3.5" />Check-in date
+                  </div>
+                  <EnumFilterSelect
+                    className="w-full sm:w-auto"
+                    value={datePreset}
+                    onChange={(v) => { setDatePreset(v as DatePreset); setPage(1); }}
+                    options={DATE_PRESETS}
+                    showDot={false}
+                  />
+                  {datePreset !== "all" && datePreset !== "custom" && (
+                    <span className="text-[11px] text-gray-400 dark:text-slate-500">
+                      scanning most recent {DATE_FILTER_CAP} matching sessions
+                    </span>
+                  )}
                 </div>
-                <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }}
-                  className="px-3 py-1.5 text-sm bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-lg text-gray-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                <span className="text-gray-300 dark:text-slate-600 text-sm">to</span>
-                <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }}
-                  className="px-3 py-1.5 text-sm bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-lg text-gray-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                {(dateFrom || dateTo) && (
-                  <span className="text-[11px] text-gray-400 dark:text-slate-500">
-                    scanning most recent {DATE_FILTER_CAP} matching sessions
-                  </span>
+
+                {datePreset === "custom" && (
+                  <div className="flex flex-wrap items-end gap-2.5 sm:pl-[102px]">
+                    <label className="flex flex-col gap-1 flex-1 min-w-[140px] sm:flex-none sm:w-44">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">From</span>
+                      <input
+                        type="date" value={customFrom} max={customTo || undefined}
+                        onChange={e => { setCustomFrom(e.target.value); setPage(1); }}
+                        className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-xl text-gray-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white dark:focus:bg-slate-800 transition"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 flex-1 min-w-[140px] sm:flex-none sm:w-44">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">To</span>
+                      <input
+                        type="date" value={customTo} min={customFrom || undefined}
+                        onChange={e => { setCustomTo(e.target.value); setPage(1); }}
+                        className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-xl text-gray-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white dark:focus:bg-slate-800 transition"
+                      />
+                    </label>
+                    {(customFrom || customTo) && (
+                      <span className="w-full sm:w-auto text-[11px] text-gray-400 dark:text-slate-500 pb-2">
+                        scanning most recent {DATE_FILTER_CAP} matching sessions
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             </motion.div>
