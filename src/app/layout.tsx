@@ -8,8 +8,10 @@ const plusJakartaSans = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://www.parkos.space"),
   title: "Parkos Admin",
   description: "Parking Management Admin Panel",
+  alternates: { canonical: "./" },
 };
 
 export default function RootLayout({
