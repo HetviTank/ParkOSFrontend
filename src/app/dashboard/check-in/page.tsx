@@ -259,7 +259,14 @@ export default function CheckInPage() {
     if (!divisionId) { setSlots([]); setSlotId(""); return; }
     setSlotLoading(true);
     apiFetch<{ list: SlotItem[] }>(`/slots?division_id=${divisionId}&limit=200`)
-      .then((r) => { setSlots(r.list ?? []); setSlotId(""); })
+      .then((r) => {
+        // Slot codes (A-1, A-2, …, A-10) need a natural sort, not lexicographic —
+        // plain string order would put "A-10" right after "A-1" and before "A-2".
+        const sorted = (r.list ?? []).slice().sort((a, b) =>
+          a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: "base" })
+        );
+        setSlots(sorted); setSlotId("");
+      })
       .catch(() => {})
       .finally(() => setSlotLoading(false));
   }, [divisionId]);
