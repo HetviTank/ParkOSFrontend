@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import { useRouter } from "next/navigation";
@@ -136,6 +136,9 @@ function CheckOutPageContent() {
   const [payMethod,      setPayMethod]      = useState<"cash" | "card" | "upi">("cash");
   const [amtReceived,    setAmtReceived]    = useState("");
   const [coRemarks,      setCoRemarks]      = useState("");
+  const [finalAmountInput,      setFinalAmountInput]      = useState("");
+  const [amountOverrideReason,  setAmountOverrideReason]  = useState("");
+  const overrideReasonRef = useRef<HTMLTextAreaElement>(null);
 
   // system relaxation hours
   const [sysRelaxHours, setSysRelaxHours] = useState(0);
@@ -187,13 +190,16 @@ function CheckOutPageContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // pre-fill amount received when session first loads
+  // pre-fill amount received + final amount when session first loads
   useEffect(() => {
     if (!session) return;
     const d   = billableDays(session.check_in_time, sysRelaxHours);
     const sub = d * session.rate_per_day;
     const gst = Math.round(sub * session.gst_percent / 100 * 100) / 100;
-    setAmtReceived(String(Math.ceil(sub + gst)));
+    const total = Math.round((sub + gst) * 100) / 100;
+    setAmtReceived(String(total));
+    setFinalAmountInput(String(total));
+    setAmountOverrideReason("");
   }, [session]);
 
   // computed billing (live — re-derived on tick)
@@ -203,8 +209,20 @@ function CheckOutPageContent() {
   const subtotal = days * rate;
   const gstAmt   = Math.round(subtotal * gstPct / 100 * 100) / 100;
   const totalAmt = subtotal + gstAmt;
-  const received = parseFloat(amtReceived) || 0;
-  const changeDue = Math.max(0, received - totalAmt);
+  const _parsedFinal = parseFloat(finalAmountInput);
+  const finalAmt = !isNaN(_parsedFinal) ? _parsedFinal : totalAmt;
+  const isAmountOverridden = Math.abs(finalAmt - totalAmt) > 0.01;
+  const _parsedReceived = parseFloat(amtReceived);
+  const received = !isNaN(_parsedReceived) ? _parsedReceived : 0;
+  const changeDue = Math.max(0, received - finalAmt);
+
+  // auto-focus the override reason textarea the moment the amount is changed
+  useEffect(() => {
+    if (isAmountOverridden) {
+      setTimeout(() => overrideReasonRef.current?.focus(), 50);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAmountOverridden]);
 
   // ── force checkout ──────────────────────────────────────────────────────────
   async function openForceCheckout() {
@@ -367,6 +385,10 @@ function CheckOutPageContent() {
     if (!coDriverMobile.trim() || coDriverMobile.trim() === "+91") { setSubmitError("Checkout driver mobile is required.");      return; }
     if (driverMatch === null)      { setSubmitError("Please verify the driver before completing."); return; }
     if (driverMatch === "mismatch") { setSubmitError("Checkout blocked — driver mismatch is flagged. Resolve the identity before releasing the truck."); return; }
+    if (isAmountOverridden && !amountOverrideReason.trim()) {
+      setSubmitError("Amount override reason is required when the final amount is changed.");
+      return;
+    }
 
     // final blacklist guard before releasing
     try {
@@ -388,7 +410,7 @@ function CheckOutPageContent() {
     const finalDays   = billableDays(session.check_in_time, sysRelaxHours);
     const finalSub    = finalDays * session.rate_per_day;
     const finalGst    = Math.round(finalSub * session.gst_percent / 100 * 100) / 100;
-    const finalTotal  = finalSub + finalGst;
+    const finalTotal  = finalAmt;
 
     setSubmitting(true); setSubmitError("");
     try {
@@ -429,15 +451,16 @@ function CheckOutPageContent() {
       await apiFetch("/payments", {
         method: "POST",
         body: JSON.stringify({
-          session_id:      session.id,
-          subtotal:        finalSub,
-          gst_amount:      finalGst,
-          total_amount:    finalTotal,
-          method:          payMethod,
-          amount_received: received || finalTotal,
-          change_due:      changeDue,
-          status:          "paid",
-          paid_at:         nowISO,
+          session_id:             session.id,
+          subtotal:               finalSub,
+          gst_amount:             finalGst,
+          total_amount:           finalTotal,
+          method:                 payMethod,
+          amount_received:        received || finalTotal,
+          change_due:             changeDue,
+          amount_override_reason: isAmountOverridden ? amountOverrideReason.trim() : null,
+          status:                 "paid",
+          paid_at:                nowISO,
         }),
       });
 
@@ -1043,13 +1066,60 @@ function CheckOutPageContent() {
                 <BillRow label="Duration" value={`${days} day${days !== 1 ? "s" : ""}`} />
                 <BillRow label="Subtotal" value={fmt(subtotal)} />
                 <BillRow label={`GST (${gstPct}%)`} value={fmt(gstAmt)} />
+                <BillRow label="Calculated total" value={fmt(totalAmt)} />
               </div>
-              <div className="border-t-2 border-blue-100 pt-3">
-                <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
-                  <span className="font-bold text-blue-900">Total payable</span>
-                  <span className="text-xl font-bold text-blue-700">{fmt(totalAmt)}</span>
+
+              {/* Editable final amount */}
+              <div className="border-t-2 border-blue-100 pt-3 space-y-2">
+                <label className={labelCls}>
+                  Final payable amount (₹)
+                  <span className="ml-1 text-gray-400 font-normal normal-case">— edit to override</span>
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={finalAmountInput}
+                  onChange={e => { setFinalAmountInput(e.target.value); setAmountOverrideReason(""); setAmtReceived(e.target.value); }}
+                  className={`${inputCls} text-lg font-bold ${isAmountOverridden ? "border-amber-400 ring-2 ring-amber-200 bg-amber-50" : ""}`}
+                />
+                {isAmountOverridden && (
+                  <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    Amount changed from {fmt(totalAmt)} → {fmt(finalAmt)}
+                  </div>
+                )}
+              </div>
+
+              {/* Mandatory override reason — strict block, auto-focused */}
+              {isAmountOverridden && (
+                <div className={`rounded-xl border-2 p-4 space-y-2.5 ${amountOverrideReason.trim() ? "border-emerald-400 bg-emerald-50" : "border-red-400 bg-red-50"}`}>
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className={`w-4 h-4 shrink-0 ${amountOverrideReason.trim() ? "text-emerald-600" : "text-red-500"}`} />
+                    <p className={`text-sm font-bold ${amountOverrideReason.trim() ? "text-emerald-700" : "text-red-700"}`}>
+                      {amountOverrideReason.trim() ? "Override reason recorded" : "Override reason required — cannot skip"}
+                    </p>
+                  </div>
+                  <p className="text-xs text-gray-600">
+                    Bill changed from <span className="font-semibold">{fmt(totalAmt)}</span> → <span className="font-semibold">{fmt(finalAmt)}</span>. This reason will be permanently recorded on the payment receipt.
+                  </p>
+                  <textarea
+                    ref={overrideReasonRef}
+                    value={amountOverrideReason}
+                    onChange={e => setAmountOverrideReason(e.target.value)}
+                    rows={3}
+                    placeholder="Required: explain why the amount was changed (e.g. discount, waiver, owner agreement…)"
+                    className={`w-full px-3.5 py-2.5 text-sm border-2 rounded-xl resize-none focus:outline-none focus:ring-2 transition bg-white
+                      ${amountOverrideReason.trim() ? "border-emerald-400 focus:ring-emerald-300" : "border-red-400 focus:ring-red-300"}`}
+                  />
+                  {!amountOverrideReason.trim() && (
+                    <p className="text-xs font-semibold text-red-600 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3 shrink-0" /> Checkout is blocked until this is filled.
+                    </p>
+                  )}
                 </div>
-              </div>
+              )}
+
               <p className="text-xs text-gray-400 flex items-center gap-1.5 pt-1">
                 <Clock className="w-3.5 h-3.5" />
                 {durationLabel(session.check_in_time)} parked → {days} billing day{days !== 1 ? "s" : ""}
@@ -1135,7 +1205,7 @@ function CheckOutPageContent() {
                   type="number"
                   value={amtReceived}
                   onChange={(e) => setAmtReceived(e.target.value)}
-                  placeholder={String(Math.ceil(totalAmt))}
+                  placeholder={String(Math.ceil(finalAmt))}
                   min={0}
                   step={1}
                   className={inputCls}
@@ -1188,8 +1258,8 @@ function CheckOutPageContent() {
             <button
               type="button"
               onClick={handleCheckout}
-              disabled={submitting || driverMatch === null}
-              className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-semibold py-3.5 rounded-xl shadow-sm shadow-blue-200 transition text-sm"
+              disabled={submitting || driverMatch === null || (isAmountOverridden && !amountOverrideReason.trim())}
+              className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-red-300 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-xl shadow-sm shadow-blue-200 transition text-sm"
             >
               {submitting ? (
                 <><Loader2 className="w-4 h-4 animate-spin" /> Processing checkout…</>

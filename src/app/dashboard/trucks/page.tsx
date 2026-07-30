@@ -106,6 +106,7 @@ interface DivData      { id: string; name: string }
 interface SlotData     { id: string; code: string; status?: string }
 interface OverdueRule  { id: string; days: number; color: string; label: string | null }
 interface UserData     { id: string; name?: string; full_name?: string; username?: string; email?: string }
+interface PaymentData  { id: string; subtotal: number; gst_amount: number; total_amount: number; method: string | null; amount_received: number | null; change_due: number | null; amount_override_reason: string | null; status: string }
 interface Enriched extends Session {
   truckNumber: string; truckType: string;
   ownerName: string; ownerMobile: string; ownerCompany: string | null;
@@ -390,6 +391,7 @@ export default function AllTrucksPage() {
   const [receiptSession, setReceiptSession] = useState<Enriched | null>(null);
   const [detailSession,  setDetailSession]  = useState<Enriched | null>(null);
   const [detailApprover, setDetailApprover] = useState<UserData | null>(null);
+  const [detailPayment,  setDetailPayment]  = useState<PaymentData | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
 
@@ -611,9 +613,14 @@ export default function AllTrucksPage() {
 
   // ── details drawer ──
   function openDetails(s: Enriched) {
-    setDetailSession(s); setDetailApprover(null); setMenuId(null);
+    setDetailSession(s); setDetailApprover(null); setDetailPayment(null); setMenuId(null);
     if (s.override_by) {
       apiFetch<UserData>(`/users/${s.override_by}`).then(setDetailApprover).catch(() => {});
+    }
+    if (s.status === "released") {
+      apiFetch<{ count: number; list: PaymentData[] }>(`/payments?session_id=${s.id}&limit=1`)
+        .then(r => setDetailPayment(r.list?.[0] ?? null))
+        .catch(() => {});
     }
   }
 
@@ -1099,7 +1106,7 @@ export default function AllTrucksPage() {
 
       {/* ── Details drawer ── */}
       <Overlay open={!!detailSession} onClose={() => setDetailSession(null)} variant="drawer" title="Truck Details" widthClass="max-w-lg">
-        {detailSession && <DetailsDrawerBody s={detailSession} approver={detailApprover} rules={overdueRules} />}
+        {detailSession && <DetailsDrawerBody s={detailSession} approver={detailApprover} payment={detailPayment} rules={overdueRules} />}
       </Overlay>
     </div>
   );
@@ -1517,7 +1524,7 @@ function ExpansionPanel({ s, statusKey }: { s: Enriched; statusKey: StatusKey })
 }
 
 // ── full details drawer ─────────────────────────────────────────────────────────
-function DetailsDrawerBody({ s, approver, rules }: { s: Enriched; approver: UserData | null; rules: OverdueRule[] }) {
+function DetailsDrawerBody({ s, approver, payment, rules }: { s: Enriched; approver: UserData | null; payment: PaymentData | null; rules: OverdueRule[] }) {
   const key = deriveStatusKey(s);
   const meta = STATUS_META[key];
   const isReleased = s.status === "released";
@@ -1603,6 +1610,14 @@ function DetailsDrawerBody({ s, approver, rules }: { s: Enriched; approver: User
             <div className="flex justify-between"><span className="text-gray-500 dark:text-slate-400">Subtotal</span><span className="font-semibold text-gray-800 dark:text-slate-200">₹{s.subtotal?.toFixed(2) ?? "—"}</span></div>
             <div className="flex justify-between"><span className="text-gray-500 dark:text-slate-400">GST ({s.gst_percent}%)</span><span className="font-semibold text-gray-800 dark:text-slate-200">₹{s.gst_amount?.toFixed(2) ?? "—"}</span></div>
             <div className="flex justify-between border-t border-gray-100 dark:border-slate-800 pt-1.5"><span className="font-bold text-gray-700 dark:text-slate-200">Total</span><span className="font-extrabold text-gray-900 dark:text-white">₹{s.total_amount?.toFixed(2) ?? "—"}</span></div>
+            {payment?.amount_override_reason && (
+              <div className="mt-2 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2.5 space-y-1">
+                <p className="text-[11px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wide flex items-center gap-1.5">
+                  <AlertCircle className="w-3 h-3 shrink-0" />Amount override reason
+                </p>
+                <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">{payment.amount_override_reason}</p>
+              </div>
+            )}
           </div>
         ) : (
           <p className="text-sm text-gray-400 dark:text-slate-500">Billing finalizes at checkout · ₹{s.rate_per_day}/day</p>
