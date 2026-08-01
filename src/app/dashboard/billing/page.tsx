@@ -508,7 +508,7 @@ export default function BillingPage() {
   const [methodFilter, setMethodFilter] = useState("");
   const [payStatusFilter, setPayStatusFilter] = useState("");
   const [sortValue, setSortValue] = useState<SortValue>("check_in_desc");
-  const [datePreset, setDatePreset] = useState<DatePreset>("this_month");
+  const [datePreset, setDatePreset] = useState<DatePreset>("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo,   setCustomTo]   = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -609,10 +609,10 @@ export default function BillingPage() {
 
   const refreshAll = useCallback(() => { fetchList(); fetchStats(); }, [fetchList, fetchStats]);
 
-  const filtersActive = !!search || (isAdmin && !!locationId) || !!methodFilter || !!payStatusFilter || !!minAmount || !!maxAmount || datePreset !== "this_month";
+  const filtersActive = !!search || (isAdmin && !!locationId) || !!methodFilter || !!payStatusFilter || !!minAmount || !!maxAmount || datePreset !== "all";
   function clearFilters() {
     setSearchInput(""); setSearch(""); setLocationId(""); setMethodFilter(""); setPayStatusFilter("");
-    setSortValue("check_in_desc"); setDatePreset("this_month"); setCustomFrom(""); setCustomTo("");
+    setSortValue("check_in_desc"); setDatePreset("all"); setCustomFrom(""); setCustomTo("");
     setMinAmount(""); setMaxAmount(""); setPage(1);
   }
 
