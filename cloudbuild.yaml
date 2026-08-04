@@ -1,41 +1,46 @@
 steps:
   - name: 'node:20'
-    entrypoint: npm
-    args: ['ci']
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        npm cache clean --force
+        npm ci
 
   - name: 'node:20'
     entrypoint: bash
-    env:
-      - 'NEXT_PUBLIC_API_URL=${_NEXT_PUBLIC_API_URL}'
     args:
       - '-c'
       - |
-        echo "Building with API URL: $$NEXT_PUBLIC_API_URL"
+        echo "Building with API URL: $NEXT_PUBLIC_API_BASE_URL"
         npm run build
+        echo "=== Checkout HTML chunk refs after build ==="
+        grep -o "[a-z0-9_-]\{10,\}\.js" /workspace/out/dashboard/check-out/index.html | sort -u
+    env:
+      - 'NEXT_PUBLIC_API_BASE_URL=${_NEXT_PUBLIC_API_BASE_URL:-https://api.parkos.space}'
 
   - name: 'gcr.io/cloud-builders/gsutil'
-    args:
-      - '-m'
-      - 'rsync'
-      - '-r'
-      - '-d'
-      - './out'
-      - 'gs://www.zeenatartofkutch.com'
-
-  - name: 'gcr.io/cloud-builders/gsutil'
-    entrypoint: bash
+    entrypoint: 'bash'
     args:
       - '-c'
       - |
-        gsutil web set -m index.html -e 404.html gs://www.zeenatartofkutch.com
+        echo "=== Uploading all files to gs://parkos.space ==="
+        gsutil -m cp -r /workspace/out/* gs://parkos.space/
+        echo "=== Upload done ==="
+        echo "=== Verifying checkout HTML chunk refs on GCS ==="
+        gsutil cat gs://parkos.space/dashboard/check-out/index.html | grep -o "[a-z0-9_-]\{10,\}\.js" | sort -u
 
-        gsutil iam ch allUsers:objectViewer gs://www.zeenatartofkutch.com
-
+  - name: 'gcr.io/cloud-builders/gsutil'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gsutil web set -m index.html -e 404.html gs://parkos.space
+        gsutil iam ch allUsers:objectViewer gs://parkos.space
+        gsutil -m setmeta -h "Cache-Control:no-cache,no-store,must-revalidate" \
+          $(gsutil ls -r "gs://parkos.space/**.html" 2>/dev/null | tr '\n' ' ') || true
         gsutil -m setmeta -h "Cache-Control:public,max-age=31536000,immutable" \
-          gs://www.zeenatartofkutch.com/_next/static/**
-
-        gsutil setmeta -h "Cache-Control:no-cache,no-store,must-revalidate" \
-          gs://www.zeenatartofkutch.com/index.html
+          $(gsutil ls -r "gs://parkos.space/_next/static/**" 2>/dev/null | tr '\n' ' ') || true
 
 options:
   logging: CLOUD_LOGGING_ONLY
