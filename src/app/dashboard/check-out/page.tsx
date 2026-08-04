@@ -190,12 +190,16 @@ function CheckOutPageContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // pre-fill amount received + final amount only once when session first loads
+  // pre-fill amount only once per session, but wait for sysRelaxHours if possible
   const prefillDoneRef = useRef(false);
+  const prefillRelaxRef = useRef(-1);
   useEffect(() => {
-    if (!session) { prefillDoneRef.current = false; return; }
-    if (prefillDoneRef.current) return;
+    if (!session) { prefillDoneRef.current = false; prefillRelaxRef.current = -1; return; }
+    // Re-fill if: never filled yet, OR relaxHours just arrived for the first time (was 0, now non-zero)
+    const relaxJustArrived = prefillDoneRef.current && sysRelaxHours > 0 && prefillRelaxRef.current === 0;
+    if (prefillDoneRef.current && !relaxJustArrived) return;
     prefillDoneRef.current = true;
+    prefillRelaxRef.current = sysRelaxHours;
     const d   = billableDays(session.check_in_time, sysRelaxHours);
     const sub = d * session.rate_per_day;
     const gst = Math.round(sub * session.gst_percent / 100 * 100) / 100;
@@ -1069,13 +1073,12 @@ function CheckOutPageContent() {
                 <BillRow label="Duration" value={`${days} day${days !== 1 ? "s" : ""}`} />
                 <BillRow label="Subtotal" value={fmt(subtotal)} />
                 <BillRow label={`GST (${gstPct}%)`} value={fmt(gstAmt)} />
-                <BillRow label="Calculated total" value={fmt(totalAmt)} />
               </div>
 
               {/* Editable final amount */}
               <div className="border-t-2 border-blue-100 pt-3 space-y-2">
                 <label className={labelCls}>
-                  Final payable amount (₹)
+                  Total payable (₹)
                   <span className="ml-1 text-gray-400 font-normal normal-case">— edit to override</span>
                 </label>
                 <input
@@ -1084,7 +1087,7 @@ function CheckOutPageContent() {
                   step={1}
                   value={finalAmountInput}
                   onChange={e => { setFinalAmountInput(e.target.value); setAmountOverrideReason(""); setAmtReceived(e.target.value); }}
-                  className={`${inputCls} text-lg font-bold ${isAmountOverridden ? "border-amber-400 ring-2 ring-amber-200 bg-amber-50" : ""}`}
+                  className={`${inputCls} text-lg font-bold ${isAmountOverridden ? "border-amber-400 ring-2 ring-amber-200 bg-amber-50" : "border-blue-400 ring-2 ring-blue-100"}`}
                 />
                 {isAmountOverridden && (
                   <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
