@@ -1,19 +1,26 @@
 steps:
   - name: 'node:20'
-    entrypoint: npm
-    args: ['ci']
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        npm cache clean --force
+        npm ci
 
   - name: 'node:20'
     entrypoint: bash
     args:
       - '-c'
       - |
-        echo "Building commit: $(git rev-parse HEAD)"
+        echo "Commit: $(git rev-parse HEAD)"
+        echo "Branch: $(git rev-parse --abbrev-ref HEAD)"
         npm run build
-        echo "=== out/ directory after build ==="
-        ls -la /workspace/out/
-        echo "=== checkout page chunk check ==="
-        grep -rl "Total payable" /workspace/out/_next/static/chunks/ || echo "WARNING: Total payable not found in chunks"
+        echo "=== Verifying out/ ==="
+        ls /workspace/out/dashboard/check-out/
+        echo "=== Checkout chunk with new code ==="
+        grep -rl "Total payable" /workspace/out/_next/static/chunks/
+        echo "=== Confirming input exists ==="
+        grep -rl "edit to override" /workspace/out/_next/static/chunks/
     env:
       - 'NEXT_PUBLIC_API_BASE_URL=${_NEXT_PUBLIC_API_BASE_URL}'
 
@@ -22,10 +29,12 @@ steps:
     args:
       - '-c'
       - |
-        echo "Syncing to GCS..."
-        gcloud storage rsync -r --delete-unmatched-destination-objects /workspace/out gs://parkos.space
-        echo "Done. Verifying checkout chunk in bucket:"
-        gsutil ls gs://parkos.space/_next/static/chunks/ | grep -v "^$" | wc -l
+        echo "=== Deleting ALL existing bucket contents first ==="
+        gsutil -m rm -r gs://parkos.space/** || true
+        echo "=== Uploading fresh build ==="
+        gsutil -m cp -r /workspace/out/** gs://parkos.space/
+        echo "=== Upload complete. Chunk count: ==="
+        gsutil ls gs://parkos.space/_next/static/chunks/ | wc -l
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
