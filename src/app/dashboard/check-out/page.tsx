@@ -190,9 +190,12 @@ function CheckOutPageContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // pre-fill amount received + final amount when session first loads
+  // pre-fill amount received + final amount only once when session first loads
+  const prefillDoneRef = useRef(false);
   useEffect(() => {
-    if (!session) return;
+    if (!session) { prefillDoneRef.current = false; return; }
+    if (prefillDoneRef.current) return;
+    prefillDoneRef.current = true;
     const d   = billableDays(session.check_in_time, sysRelaxHours);
     const sub = d * session.rate_per_day;
     const gst = Math.round(sub * session.gst_percent / 100 * 100) / 100;
@@ -200,7 +203,7 @@ function CheckOutPageContent() {
     setAmtReceived(String(total));
     setFinalAmountInput(String(total));
     setAmountOverrideReason("");
-  }, [session]);
+  }, [session, sysRelaxHours]);
 
   // computed billing (live — re-derived on tick)
   const days     = billableDays(session?.check_in_time ?? null, sysRelaxHours);
