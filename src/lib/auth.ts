@@ -14,7 +14,7 @@ export function handleUnauthorized() {
     // trailing "index.html" so this also resolves on hosts (e.g. the raw
     // storage.googleapis.com/<bucket>/ test URL) that don't auto-resolve a
     // bare trailing-slash path to its index.html.
-    window.location.href = `${basePath}/login/index.html`;
+    window.location.href = `${basePath}/login`;
   }
 }
 
