@@ -7,7 +7,6 @@ steps:
     entrypoint: bash
     env:
       - 'NEXT_PUBLIC_API_BASE_URL=$_NEXT_PUBLIC_API_BASE_URL'
-      - 'NEXT_PUBLIC_API_URL=$_NEXT_PUBLIC_API_BASE_URL'
     args:
       - '-c'
       - |
@@ -37,5 +36,3 @@ steps:
 
 options:
   logging: CLOUD_LOGGING_ONLY
-substitutions:
-  _NEXT_PUBLIC_API_BASE_URL: 'https://parkos-866864043139.asia-south1.run.app'
