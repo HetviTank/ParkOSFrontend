@@ -8,7 +8,7 @@ steps:
     args:
       - '-c'
       - |
-        echo "Starting build for API: $$NEXT_PUBLIC_API_BASE_URL"
+        echo "Starting build for API: $NEXT_PUBLIC_API_BASE_URL"
         npm run build
     env:
       - 'NEXT_PUBLIC_API_BASE_URL=${_NEXT_PUBLIC_API_BASE_URL}'
@@ -33,7 +33,7 @@ steps:
         # Make objects publicly readable
         gcloud storage buckets add-iam-policy-binding gs://parkos.space --member=allUsers --role=roles/storage.objectViewer
 
-        # Set cache controls (Notice the ** for recursive matching)
+        # Set cache controls
         gcloud storage objects update "gs://parkos.space/_next/**" --cache-control="public,max-age=31536000,immutable" || true
         gcloud storage objects update "gs://parkos.space/**/*.html" --cache-control="no-cache,no-store,must-revalidate" || true
 
