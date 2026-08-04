@@ -8,24 +8,25 @@ steps:
     args:
       - '-c'
       - |
-        echo "Starting build for API: $$NEXT_PUBLIC_API_BASE_URL"
+        echo "Building commit: $(git rev-parse HEAD)"
         npm run build
-        echo "Build complete. Contents of out/:"
-        ls -la out/
+        echo "=== out/ directory after build ==="
+        ls -la /workspace/out/
+        echo "=== checkout page chunk check ==="
+        grep -rl "Total payable" /workspace/out/_next/static/chunks/ || echo "WARNING: Total payable not found in chunks"
     env:
       - 'NEXT_PUBLIC_API_BASE_URL=${_NEXT_PUBLIC_API_BASE_URL}'
 
-  # Sync built files to GCS bucket
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        echo "Syncing out/ to gs://parkos.space ..."
+        echo "Syncing to GCS..."
         gcloud storage rsync -r --delete-unmatched-destination-objects /workspace/out gs://parkos.space
-        echo "Sync complete."
+        echo "Done. Verifying checkout chunk in bucket:"
+        gsutil ls gs://parkos.space/_next/static/chunks/ | grep -v "^$" | wc -l
 
-  # Set bucket website config and public access
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
     args:
@@ -34,22 +35,11 @@ steps:
         gcloud storage buckets update gs://parkos.space \
           --web-main-page-suffix=index.html \
           --web-error-page=404.html
-
         gcloud storage buckets add-iam-policy-binding gs://parkos.space \
           --member=allUsers \
           --role=roles/storage.objectViewer
-
-  # Set cache headers: immutable for hashed JS/CSS, no-cache for HTML
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        # No-cache for all HTML files (find + loop — globs not supported by gcloud storage)
         gsutil -m setmeta -h "Cache-Control:no-cache,no-store,must-revalidate" \
           $(gsutil ls -r "gs://parkos.space/**.html" 2>/dev/null | tr '\n' ' ') || true
-
-        # Long-lived cache for hashed _next static assets
         gsutil -m setmeta -h "Cache-Control:public,max-age=31536000,immutable" \
           $(gsutil ls -r "gs://parkos.space/_next/static/**" 2>/dev/null | tr '\n' ' ') || true
 
