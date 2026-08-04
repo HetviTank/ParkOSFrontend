@@ -6,11 +6,12 @@ steps:
   - name: 'node:20'
     entrypoint: bash
     env:
-      - 'NEXT_PUBLIC_API_URL=${_NEXT_PUBLIC_API_URL}'
+      - 'NEXT_PUBLIC_API_BASE_URL=$_NEXT_PUBLIC_API_BASE_URL'
+      - 'NEXT_PUBLIC_API_URL=$_NEXT_PUBLIC_API_BASE_URL'
     args:
       - '-c'
       - |
-        echo "Building with API URL: $$NEXT_PUBLIC_API_URL"
+        echo "Building with API URL: $$NEXT_PUBLIC_API_BASE_URL"
         npm run build
 
   - name: 'gcr.io/cloud-builders/gsutil'
@@ -28,14 +29,13 @@ steps:
       - '-c'
       - |
         gsutil web set -m index.html -e 404.html gs://parkos.space
-
         gsutil iam ch allUsers:objectViewer gs://parkos.space
-
         gsutil -m setmeta -h "Cache-Control:public,max-age=31536000,immutable" \
           gs://parkos.space/_next/static/**
-
         gsutil setmeta -h "Cache-Control:no-cache,no-store,must-revalidate" \
           gs://parkos.space/index.html
 
 options:
   logging: CLOUD_LOGGING_ONLY
+substitutions:
+  _NEXT_PUBLIC_API_BASE_URL: 'https://parkos-866864043139.asia-south1.run.app'
