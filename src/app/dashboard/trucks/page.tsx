@@ -692,7 +692,7 @@ export default function AllTrucksPage() {
             <span className="text-gray-700 dark:text-slate-300 font-semibold">All Trucks</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white tracking-tight">All Trucks</h1>
-          <p className="text-sm text-gray-400 dark:text-slate-500 mt-1">Monitor all active and completed parking sessions.</p>
+          <p className="text-sm text-gray-400 dark:text-slate-500 mt-1">Monitor all active and completed parking.</p>
         </div>
         <div className="flex items-center gap-2 self-start sm:self-center">
           <button
