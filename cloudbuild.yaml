@@ -33,9 +33,9 @@ steps:
         # Make objects publicly readable
         gcloud storage buckets add-iam-policy-binding gs://parkos.space --member=allUsers --role=roles/storage.objectViewer
 
-        # Set cache controls
+        # Set cache controls (Notice the ** for recursive matching)
         gcloud storage objects update "gs://parkos.space/_next/**" --cache-control="public,max-age=31536000,immutable" || true
-        gcloud storage objects update "gs://parkos.space/*.html" --cache-control="no-cache,no-store,must-revalidate" || true
+        gcloud storage objects update "gs://parkos.space/**/*.html" --cache-control="no-cache,no-store,must-revalidate" || true
 
 options:
   logging: CLOUD_LOGGING_ONLY
