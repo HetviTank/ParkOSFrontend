@@ -58,27 +58,37 @@ interface HistoryItem extends Session {
 // ── helpers ───────────────────────────────────────────────────────────────────
 function daysSince(iso: string) { return Math.max(1, Math.ceil((Date.now() - new Date(iso).getTime()) / 86_400_000)); }
 
+function istDateParts(iso: string): { day: number; month: number; year: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(iso));
+  return {
+    year: Number(parts.find(p => p.type === "year")?.value),
+    month: Number(parts.find(p => p.type === "month")?.value) - 1,
+    day: Number(parts.find(p => p.type === "day")?.value),
+  };
+}
 function fmtShort(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 function fmtRange(s: Session): string {
-  const cin = new Date(s.check_in_time);
   if (!s.check_out_time) return `In ${fmtShort(s.check_in_time)} — still parked`;
-  const cout = new Date(s.check_out_time);
-  if (cin.getMonth() === cout.getMonth() && cin.getFullYear() === cout.getFullYear())
-    return `${cin.getDate()} – ${cout.getDate()} ${cin.toLocaleString("en-IN", { month: "short" })}`;
-  return `${cin.getDate()} ${cin.toLocaleString("en-IN", { month: "short" })} – ${cout.getDate()} ${cout.toLocaleString("en-IN", { month: "short" })}`;
+  const cin = istDateParts(s.check_in_time);
+  const cout = istDateParts(s.check_out_time);
+  const cinMon = new Date(s.check_in_time).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", month: "short" });
+  const coutMon = new Date(s.check_out_time).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", month: "short" });
+  if (cin.month === cout.month && cin.year === cout.year)
+    return `${cin.day} – ${cout.day} ${coutMon}`;
+  return `${cin.day} ${cinMon} – ${cout.day} ${coutMon}`;
 }
 function getLast6Months(sessions: Session[]): { label: string; count: number }[] {
-  const now = new Date();
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
   return Array.from({ length: 6 }, (_, i) => {
     const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
     return {
-      label: d.toLocaleString("en-IN", { month: "short" }),
+      label: d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", month: "short" }),
       count: sessions.filter(s => {
-        const sd = new Date(s.check_in_time);
-        return sd.getFullYear() === d.getFullYear() && sd.getMonth() === d.getMonth();
+        const sd = istDateParts(s.check_in_time);
+        return sd.year === d.getFullYear() && sd.month === d.getMonth();
       }).length,
     };
   });
@@ -212,9 +222,9 @@ function ProfileContent() {
   }
 
   // ── computed ────────────────────────────────────────────────────────────────
-  const now        = new Date();
+  const now        = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
   const totalVisits = sessions.length;
-  const thisMonth   = sessions.filter(s => { const d = new Date(s.check_in_time); return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth(); }).length;
+  const thisMonth   = sessions.filter(s => { const d = istDateParts(s.check_in_time); return d.year === now.getFullYear() && d.month === now.getMonth(); }).length;
   const completed   = sessions.filter(s => s.days && s.days > 0);
   const avgStay     = completed.length ? (completed.reduce((s, r) => s + (r.days ?? 0), 0) / completed.length) : 0;
   const totalRev    = sessions.reduce((s, r) => s + (r.total_amount ?? 0), 0);

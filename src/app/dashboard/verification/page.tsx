@@ -144,13 +144,14 @@ function fmtTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   const now = new Date();
-  const isToday = d.toDateString() === now.toDateString();
-  const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
-  const isYesterday = d.toDateString() === yesterday.toDateString();
-  const time = d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  const dateKey = (dt: Date) => dt.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const isToday = dateKey(d) === dateKey(now);
+  const yesterday = new Date(now.getTime() - 86400000);
+  const isYesterday = dateKey(d) === dateKey(yesterday);
+  const time = d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
   if (isToday)     return `${time} today`;
   if (isYesterday) return `Yesterday ${time}`;
-  return `${d.toLocaleDateString("en-IN", { day: "numeric", month: "short" })} ${time}`;
+  return `${d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" })} ${time}`;
 }
 
 function isSameDay(a: Date, b: Date): boolean {

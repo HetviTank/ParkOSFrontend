@@ -71,9 +71,9 @@ function fmtRupees(n: number | null | undefined) {
 function fmtDateTime(iso: string | null) {
   if (!iso) return "—";
   const d = new Date(iso);
-  const day = d.getDate();
-  const mon = d.toLocaleDateString("en-IN", { month: "short" });
-  const time = d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const day = d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric" });
+  const mon = d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "short" });
+  const time = d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false });
   return `${day} ${mon} · ${time}`;
 }
 function calcDuration(checkIn: string | null, checkOut: string | null): string {

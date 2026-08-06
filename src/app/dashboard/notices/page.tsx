@@ -76,9 +76,11 @@ function fmtTime(iso: string | null) {
   const d   = new Date(iso);
   const now = new Date();
   const diffDays = Math.floor((now.getTime() - d.getTime()) / 86400000);
-  const time = d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const time = d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false });
   if (diffDays === 0) return time;
-  return `${d.getDate()} ${d.toLocaleDateString("en-IN", { month: "short" })} ${time}`;
+  const day = d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric" });
+  const month = d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "short" });
+  return `${day} ${month} ${time}`;
 }
 function relTime(iso: string | null) {
   if (!iso) return "";

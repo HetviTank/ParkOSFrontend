@@ -47,17 +47,17 @@ const fmtShort = (n: number) =>
   : `₹${n}`;
 
 function greet() {
-  const h = new Date().getHours();
+  const h = Number(new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", hour12: false }));
   return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
 }
 function clockNow() {
   return new Date().toLocaleTimeString("en-IN", {
-    hour: "2-digit", minute: "2-digit", hour12: true,
+    timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: true,
   });
 }
 function dateLabel() {
   return new Date().toLocaleDateString("en-IN", {
-    weekday: "long", day: "numeric", month: "long", year: "numeric",
+    timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", year: "numeric",
   });
 }
 
@@ -230,7 +230,7 @@ export default function DashboardPage() {
                 {lastUpdated && (
                   <>
                     {" · refreshed "}
-                    {lastUpdated.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                    {lastUpdated.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                   </>
                 )}
               </p>
@@ -586,7 +586,7 @@ function OverdueTrucksCard({ trucks, loading, rulesConfigured }: {
                         {t.ownerMobile ? ` · ${t.ownerMobile}` : ""}
                       </p>
                       <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">
-                        In: {new Date(t.checkInTime).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                        In: {new Date(t.checkInTime).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" })}
                       </p>
                     </div>
                     <div className="shrink-0 flex items-center gap-1.5">

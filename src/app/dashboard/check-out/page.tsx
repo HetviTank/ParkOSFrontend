@@ -92,6 +92,7 @@ function durationLabel(checkInTime: string | null): string {
 function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
     day: "2-digit", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit", hour12: true,
   });
@@ -1150,7 +1151,7 @@ function CheckOutPageContent() {
                     <BillRow
                       label="Period from"
                       value={new Date(khataBill.period_start).toLocaleDateString("en-IN", {
-                        day: "2-digit", month: "short", year: "numeric",
+                        timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric",
                       })}
                     />
                     <BillRow label="Sessions this period" value={String(khataBill.session_count)} />

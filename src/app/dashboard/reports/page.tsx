@@ -60,25 +60,34 @@ function fmtRupees(n: number) { return `₹${n.toLocaleString("en-IN")}`; }
 function fmtShort(n: number)  { if (n >= 100000) return `₹${(n/100000).toFixed(1)}L`; if (n >= 1000) return `₹${(n/1000).toFixed(0)}k`; return fmtRupees(n); }
 function fmtInt(n: number)    { return n.toLocaleString("en-IN"); }
 
+function nowIST(): Date {
+  return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+}
+function istYearMonth(iso: string): [number, number] {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit" }).formatToParts(new Date(iso));
+  const year = Number(parts.find(p => p.type === "year")?.value);
+  const month = Number(parts.find(p => p.type === "month")?.value) - 1;
+  return [year, month];
+}
 function monthOptions(): { label: string; year: number; month: number }[] {
-  const now = new Date(); const opts = [];
+  const now = nowIST(); const opts = [];
   for (let i = 0; i < 12; i++) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    opts.push({ label: d.toLocaleDateString("en-IN", { month: "long", year: "numeric" }), year: d.getFullYear(), month: d.getMonth() });
+    opts.push({ label: d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "long", year: "numeric" }), year: d.getFullYear(), month: d.getMonth() });
   }
   return opts;
 }
 function inMonth(iso: string | null, y: number, m: number) {
   if (!iso) return false;
-  const d = new Date(iso);
-  return d.getFullYear() === y && d.getMonth() === m;
+  const [dy, dm] = istYearMonth(iso);
+  return dy === y && dm === m;
 }
 function monthlySeries(sessions: Session[], monthsBack: number, reducer: (subset: Session[]) => number) {
-  const now = new Date();
+  const now = nowIST();
   return Array.from({ length: monthsBack }, (_, i) => {
     const d = new Date(now.getFullYear(), now.getMonth() - (monthsBack - 1 - i), 1);
     const subset = sessions.filter(s => inMonth(s.check_out_time ?? s.created_at, d.getFullYear(), d.getMonth()));
-    return { label: d.toLocaleDateString("en-IN", { month: "short" }), value: reducer(subset) };
+    return { label: d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "short" }), value: reducer(subset) };
   });
 }
 function occColor(pct: number) { return pct >= 90 ? "#ef4444" : pct >= 70 ? "#f59e0b" : "#10b981"; }

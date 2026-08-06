@@ -64,18 +64,20 @@ function fmtMobile(m: string) { const d = m.replace(/\D/g,""); return `+91 ${d.s
 function fmtRupees(n: number) { return `₹${n.toLocaleString("en-IN")}`; }
 function fmtMonthYear(iso: string | null) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+  return new Date(iso).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "short", year: "numeric" });
 }
 function fmtRange(checkIn: string | null, checkOut: string | null): string {
   if (!checkIn) return "—";
   const inn = new Date(checkIn);
-  const inDay = inn.getDate();
-  const inMon = inn.toLocaleDateString("en-IN", { month: "short" });
+  const inDay = inn.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric" });
+  const inMon = inn.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "short" });
   if (!checkOut) return `In ${inDay} ${inMon}`;
   const out = new Date(checkOut);
-  const outDay = out.getDate();
-  const outMon = out.toLocaleDateString("en-IN", { month: "short" });
-  if (inMon === outMon && inn.getFullYear() === out.getFullYear())
+  const outDay = out.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric" });
+  const outMon = out.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "short" });
+  const inYear = inn.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: "numeric" });
+  const outYear = out.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: "numeric" });
+  if (inMon === outMon && inYear === outYear)
     return `${inDay}–${outDay} ${outMon}`;
   return `${inDay} ${inMon} – ${outDay} ${outMon}`;
 }

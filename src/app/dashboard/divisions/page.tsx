@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
   ChevronRight, ChevronDown, Plus, X, Loader2, AlertCircle, Check,
-  CheckCircle2, Layers, Save, Truck, Zap, Percent, IndianRupee, Timer,
+  CheckCircle2, Layers, Save, Truck, Zap, Percent, IndianRupee, Timer, Trash2,
 } from "lucide-react";
 
 import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
@@ -238,6 +238,11 @@ export default function DivisionsPage() {
   const [newBusy,   setNewBusy]   = useState(false);
   const [newOk,     setNewOk]     = useState(false);
 
+  // delete confirmation
+  const [delTarget, setDelTarget] = useState<Division | null>(null);
+  const [delError,  setDelError]  = useState("");
+  const [deleting,  setDeleting]  = useState(false);
+
 
   // load system relaxation hours
   useEffect(() => {
@@ -315,7 +320,7 @@ export default function DivisionsPage() {
           truck_type: div.truck_type,
           total_slots: Number(e.slots),
           rate_per_day: Number(e.rate),
-          gst_percent: Number(e.gst) || 18,
+          gst_percent: e.gst === "" || isNaN(Number(e.gst)) ? 18 : Number(e.gst),
           status: e.status,
         }),
       });
@@ -390,7 +395,7 @@ export default function DivisionsPage() {
         body: JSON.stringify({
           name: newName.trim(), location_id: selLoc, truck_type: newType,
           total_slots: Number(newSlots), rate_per_day: Number(newRate),
-          gst_percent: Number(newGst) || 18,
+          gst_percent: newGst === "" || isNaN(Number(newGst)) ? 18 : Number(newGst),
           status: newStatus,
         }),
       });
@@ -415,6 +420,17 @@ export default function DivisionsPage() {
     finally { setNewBusy(false); }
   }
 
+  async function handleDelete() {
+    if (!delTarget) return;
+    setDeleting(true); setDelError("");
+    try {
+      // Backend performs a soft delete (flags is_deleted) — the row stays in the DB.
+      await apiFetch(`/divisions/${delTarget.id}`, { method: "DELETE" });
+      setDivisions(p => p.filter(d => d.id !== delTarget.id));
+      setDelTarget(null);
+    } catch (err) { setDelError(err instanceof Error ? err.message : "Failed to delete division."); }
+    finally { setDeleting(false); }
+  }
 
   const selectedLoc = locations.find(l => l.id === selLoc);
 
@@ -802,6 +818,11 @@ export default function DivisionsPage() {
                           ? <><Loader2 className="w-4 h-4 animate-spin text-gray-400" />Saving…</>
                           : <><Save className="w-4 h-4 text-gray-500" />Save changes</>}
                       </button>
+                      <button
+                        onClick={() => { setDelTarget(div); setDelError(""); }}
+                        className="flex items-center gap-2 bg-white hover:bg-red-50 text-red-600 font-bold text-sm px-4 py-2.5 rounded-xl border border-red-200 shadow-sm transition">
+                        <Trash2 className="w-4 h-4" />Delete
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -809,6 +830,49 @@ export default function DivisionsPage() {
             );
           })}
 
+        </div>
+      )}
+
+      {/* delete confirmation modal */}
+      {delTarget && (
+        <div className="fixed inset-0 z-50 bg-black/25 backdrop-blur-sm flex items-end sm:items-center justify-center p-4" onClick={() => !deleting && setDelTarget(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-11 h-11 bg-red-100 rounded-xl flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900">Delete division</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Can be restored later from the database if needed</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 mb-5">
+              Delete <span className="font-semibold text-gray-900">{delTarget.name}</span>? Its slots and rate settings will be hidden from this location.
+            </p>
+            {delError && (
+              <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-4">
+                <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                <p className="text-sm text-red-700">{delError}</p>
+              </div>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDelTarget(null)}
+                className="flex-1 border border-gray-200 text-gray-600 hover:bg-gray-50 font-semibold py-2.5 rounded-xl transition text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-semibold py-2.5 rounded-xl transition text-sm"
+              >
+                {deleting
+                  ? <><Loader2 className="w-4 h-4 animate-spin" />Deleting…</>
+                  : <><Trash2 className="w-4 h-4" />Delete division</>}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

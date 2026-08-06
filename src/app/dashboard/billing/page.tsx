@@ -103,37 +103,44 @@ const DATE_PRESETS = [
 ] as const;
 type DatePreset = typeof DATE_PRESETS[number]["value"];
 
+// Sends the literal local (IST) wall-clock digits, uncorrupted by any UTC conversion —
+// the backend's date/time columns are timezone-naive and store IST wall-clock values as-is.
+function toNaiveISO(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 function presetRange(preset: DatePreset, customFrom: string, customTo: string): { from?: string; to?: string } {
   const now = new Date();
   if (preset === "today") {
-    return { from: new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString(), to: now.toISOString() };
+    return { from: toNaiveISO(new Date(now.getFullYear(), now.getMonth(), now.getDate())), to: toNaiveISO(now) };
   }
   if (preset === "this_week") {
     const day = now.getDay();
     const diff = day === 0 ? 6 : day - 1;
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diff);
-    return { from: start.toISOString(), to: now.toISOString() };
+    return { from: toNaiveISO(start), to: toNaiveISO(now) };
   }
   if (preset === "this_month") {
-    return { from: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(), to: now.toISOString() };
+    return { from: toNaiveISO(new Date(now.getFullYear(), now.getMonth(), 1)), to: toNaiveISO(now) };
   }
   if (preset === "last_month") {
     const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
-    return { from: start.toISOString(), to: end.toISOString() };
+    return { from: toNaiveISO(start), to: toNaiveISO(end) };
   }
   if (preset === "custom") {
     return {
-      from: customFrom ? new Date(customFrom).toISOString() : undefined,
-      to: customTo ? new Date(`${customTo}T23:59:59`).toISOString() : undefined,
+      from: customFrom ? `${customFrom}T00:00:00` : undefined,
+      to: customTo ? `${customTo}T23:59:59` : undefined,
     };
   }
   return {};
 }
 function presetLabel(preset: DatePreset): string {
-  const now = new Date();
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
   if (preset === "this_month") return now.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
-  if (preset === "last_month") { const d = new Date(now.getFullYear(), now.getMonth() - 1); return d.toLocaleDateString("en-IN", { month: "long", year: "numeric" }); }
+  if (preset === "last_month") { const d = new Date(now.getFullYear(), now.getMonth() - 1); return d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "long", year: "numeric" }); }
   return DATE_PRESETS.find(p => p.value === preset)?.label ?? "All time";
 }
 
@@ -177,12 +184,18 @@ function fmtRupees(n: number) { return `₹${n.toLocaleString("en-IN", { maximum
 function fmtDate(iso: string | null) {
   if (!iso) return "—";
   const d = new Date(iso);
-  return `${d.getDate()} ${d.toLocaleDateString("en-IN", { month: "short" })} ${d.getFullYear()}`;
+  const day = d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric" });
+  const mon = d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "short" });
+  const year = d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: "numeric" });
+  return `${day} ${mon} ${year}`;
 }
 function fmtDateTime(iso: string | null) {
   if (!iso) return "—";
   const d = new Date(iso);
-  return `${d.getDate()} ${d.toLocaleDateString("en-IN", { month: "short" })} · ${d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+  const day = d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric" });
+  const mon = d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "short" });
+  const time = d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${day} ${mon} · ${time}`;
 }
 function fmtMobile(m: string) { const d = m.replace(/\D/g, ""); return d ? `+91 ${d.slice(-10, -5)} ${d.slice(-5)}` : "—"; }
 function calcDuration(ci: string | null, co: string | null): string {

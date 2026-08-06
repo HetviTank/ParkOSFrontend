@@ -40,7 +40,8 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
 }
 
 function todayStr() {
-  return new Date().toISOString().split("T")[0];
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function nowTimeStr() {
   const d = new Date();
@@ -440,8 +441,10 @@ export default function CheckInPage() {
         finalTruckId = newTruck.id;
       }
 
-      // combine date + time into ISO datetime
-      const checkInISO = new Date(`${checkInDate}T${checkInTime}`).toISOString();
+      // combine date + time as the literal wall-clock value the user picked (IST) —
+      // do NOT run this through Date/toISOString, which converts to UTC and corrupts
+      // the stored value once it lands in the backend's timezone-naive column.
+      const checkInISO = `${checkInDate}T${checkInTime}:00`;
 
       // create parking session
       await apiFetch<{ id: string }>("/parking-sessions", {
@@ -926,7 +929,7 @@ export default function CheckInPage() {
               <div className="w-full bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-5">
                 <p className="text-xs font-semibold text-amber-400 uppercase tracking-widest mb-1">Checked in since</p>
                 <p className="text-sm text-amber-700 font-medium">
-                  {new Date(alreadyInSince).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
+                  {new Date(alreadyInSince).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })}
                 </p>
               </div>
             )}
