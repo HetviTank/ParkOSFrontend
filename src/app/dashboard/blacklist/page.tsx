@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -290,6 +291,15 @@ const COL_LABELS = ["", "Truck", "Owner", "Reason", "Added By", "Added On", "Sta
 
 // ── main page ─────────────────────────────────────────────────────────────────
 export default function BlacklistPage() {
+  return (
+    <Suspense fallback={null}>
+      <BlacklistPageInner />
+    </Suspense>
+  );
+}
+
+function BlacklistPageInner() {
+  const searchParams = useSearchParams();
   const [list, setList] = useState<Enriched[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -297,8 +307,8 @@ export default function BlacklistPage() {
   const [listError, setListError] = useState("");
   const [exporting, setExporting] = useState(false);
 
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState(() => searchParams.get("q") ?? "");
+  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
   const [statusFilter, setStatusFilter] = useState<"" | "active" | "inactive">("");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [showAdvanced, setShowAdvanced] = useState(false);

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import type { SortingState, PaginationState, VisibilityState } from "@tanstack/react-table";
 import { useReactTable, getCoreRowModel, createColumnHelper } from "@tanstack/react-table";
@@ -321,6 +322,15 @@ const OPTIONAL_COLS: { key: ColKey; label: string }[] = [
 
 // ── main page ─────────────────────────────────────────────────────────────────
 export default function KhataMasterPage() {
+  return (
+    <Suspense fallback={null}>
+      <KhataMasterPageInner />
+    </Suspense>
+  );
+}
+
+function KhataMasterPageInner() {
+  const searchParams = useSearchParams();
   const { isAdmin, locationId, setLocationId } = useLocationFilter();
   const { truckTypes } = useTruckTypes();
   const [locations, setLocations] = useState<LocationObj[]>([]);
@@ -333,8 +343,8 @@ export default function KhataMasterPage() {
   const [stats, setStats] = useState<KhataStats | null>(null);
   const [weeklyTrend, setWeeklyTrend] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
 
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState(() => searchParams.get("q") ?? "");
+  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
   const [statusFilter, setStatusFilter] = useState<"" | "active" | "suspended">("");
   const [sortKey, setSortKey] = useState<"newest" | "oldest" | "highest_due" | "alphabetical">("newest");
 

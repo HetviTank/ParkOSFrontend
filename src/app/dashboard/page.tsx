@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { LocationSelect, type LocationOption } from "@/components/ui/LocationSelect";
+import { GlobalSearch } from "@/components/GlobalSearch";
 import { useLocationFilter } from "@/lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -235,6 +236,8 @@ export default function DashboardPage() {
                 )}
               </p>
             </div>
+
+            <GlobalSearch className="w-full sm:w-72 lg:w-96" />
 
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 shrink-0">
               {/* Location — scopes the KPIs, Live Slot Map and Overdue Trucks below.

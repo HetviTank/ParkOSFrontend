@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -175,6 +176,15 @@ const inputCls = (ring: string) =>
 
 // ── page ──────────────────────────────────────────────────────────────────────
 export default function DivisionsPage() {
+  return (
+    <Suspense fallback={null}>
+      <DivisionsPageInner />
+    </Suspense>
+  );
+}
+
+function DivisionsPageInner() {
+  const searchParams = useSearchParams();
   // Non-admin roles are locked to their assigned location — no "All locations" escape hatch.
   const { isAdmin, locationId: selLoc, setLocationId: setSelLoc } = useLocationFilter();
   const { truckTypes } = useTruckTypes();
@@ -244,11 +254,13 @@ export default function DivisionsPage() {
       .then(r => {
         const list = r.list ?? [];
         setLocations(list);
-        // Admins default to the first location; non-admins are already locked
-        // to their own assigned location (set from localStorage on mount).
-        if (isAdmin && list.length > 0) setSelLoc(prev => prev || list[0].id);
+        // Admins default to the first location, or to ?location= when arriving
+        // from a global-search redirect; non-admins are already locked to
+        // their own assigned location (set from localStorage on mount).
+        const fromSearch = searchParams.get("location");
+        if (isAdmin && list.length > 0) setSelLoc(prev => prev || fromSearch || list[0].id);
       }).catch(() => {});
-  }, [isAdmin, setSelLoc]);
+  }, [isAdmin, setSelLoc, searchParams]);
 
   const loadDivisions = useCallback(async (locId_: string) => {
     if (!locId_) return;

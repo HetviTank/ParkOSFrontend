@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   ChevronRight, ChevronLeft, ChevronRight as ChevronRightIcon, ChevronDown,
   UserPlus, Search, Loader2, AlertCircle,
@@ -66,13 +67,22 @@ const AVATAR_GRADIENTS = [
 const avatarGrad = (id: string) => AVATAR_GRADIENTS[id.charCodeAt(0) % AVATAR_GRADIENTS.length];
 
 export default function AdminUsersPage() {
+  return (
+    <Suspense fallback={null}>
+      <AdminUsersPageInner />
+    </Suspense>
+  );
+}
+
+function AdminUsersPageInner() {
+  const searchParams = useSearchParams();
   const [users,     setUsers]     = useState<AdminUser[]>([]);
   const [total,     setTotal]     = useState(0);
   const [page,      setPage]      = useState(1);
   const [loading,   setLoading]   = useState(false);
   const [listError, setListError] = useState("");
-  const [searchInput, setSearchInput] = useState("");
-  const [search,      setSearch]      = useState("");
+  const [searchInput, setSearchInput] = useState(() => searchParams.get("q") ?? "");
+  const [search,      setSearch]      = useState(() => searchParams.get("q") ?? "");
   const [roles,     setRoles]     = useState<Role[]>([]);
   const [locations, setLocations] = useState<LocItem[]>([]);
   const [opGroups,  setOpGroups]  = useState<OpGroup[]>([]);
