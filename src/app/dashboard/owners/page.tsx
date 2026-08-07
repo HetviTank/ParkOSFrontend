@@ -18,6 +18,7 @@ import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
 import { LocationSelect } from "@/components/ui/LocationSelect";
 
 import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
+import { useTruckTypes, truckTypeLabel, truckTypeChipStyle, type TruckTypeOption } from "@/lib/truckTypes";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -55,16 +56,6 @@ interface Enriched { owner: Owner; trucks: TruckObj[]; totalSpend: number; lastS
 interface LocationObj { id: string; name: string; city?: string | null }
 
 const PAGE_SIZE = 12;
-
-const TRUCK_TYPE_OPTIONS = ["Heavy (20T+)", "Heavy (10-20T)", "Medium (5-10T)", "Light (<5T)", "Trailer", "Tanker"];
-const TRUCK_TYPE_META: Record<string, { color: string; abbr: string }> = {
-  "Heavy (20T+)":   { color: "from-red-500 to-rose-600",      abbr: "H+" },
-  "Heavy (10-20T)": { color: "from-orange-500 to-red-500",    abbr: "H"  },
-  "Medium (5-10T)": { color: "from-amber-500 to-orange-500",  abbr: "M"  },
-  "Light (<5T)":    { color: "from-emerald-500 to-teal-600",  abbr: "L"  },
-  "Trailer":        { color: "from-indigo-500 to-violet-600", abbr: "Tr" },
-  "Tanker":         { color: "from-cyan-500 to-blue-600",     abbr: "Tk" },
-};
 
 const SORT_OPTIONS = [
   { value: "last_visit_desc",   label: "Recently Active",  sort_by: "last_visit",   order: "desc" },
@@ -125,9 +116,9 @@ function PagBtn({ disabled, onClick, children }: { disabled: boolean; onClick():
   );
 }
 
-function TruckChip({ truck, onEdit, onDelete }: { truck: TruckObj; onEdit: () => void; onDelete: () => void }) {
+function TruckChip({ truck, truckTypes, onEdit, onDelete }: { truck: TruckObj; truckTypes: TruckTypeOption[]; onEdit: () => void; onDelete: () => void }) {
   return (
-    <div title={truck.truck_type ?? undefined}
+    <div title={truck.truck_type ? truckTypeLabel(truckTypes, truck.truck_type) : undefined}
       className="group flex items-center gap-1 bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-xs font-bold rounded-lg font-mono overflow-hidden transition-transform duration-150 hover:scale-105">
       <Link href={`/dashboard/trucks/profile?q=${encodeURIComponent(truck.truck_number)}`} className="flex items-center gap-1 pl-2.5 pr-1 py-1 hover:bg-indigo-100 dark:hover:bg-indigo-500/15 transition">
         <TruckIcon className="w-3 h-3 shrink-0" />{truck.truck_number}
@@ -144,8 +135,8 @@ function TruckChip({ truck, onEdit, onDelete }: { truck: TruckObj; onEdit: () =>
   );
 }
 
-function TruckTypeSelect({ value, onChange, placeholder = "Select type…" }: {
-  value: string; onChange: (v: string) => void; placeholder?: string;
+function TruckTypeSelect({ value, onChange, options, placeholder = "Select type…" }: {
+  value: string; onChange: (v: string) => void; options: TruckTypeOption[]; placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [rect,  setRect]  = useState<DOMRect | null>(null);
@@ -179,7 +170,8 @@ function TruckTypeSelect({ value, onChange, placeholder = "Select type…" }: {
     return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
   }, [open]);
 
-  const meta = value ? TRUCK_TYPE_META[value] : null;
+  const selectedOption = value ? options.find(o => o.code === value) : null;
+  const meta = value ? truckTypeChipStyle(value, selectedOption?.name) : null;
   const estimatedPanelHeight = 300;
   const openUp = rect ? rect.bottom + estimatedPanelHeight > window.innerHeight && rect.top > window.innerHeight - rect.bottom : false;
   const panelStyle: React.CSSProperties = rect ? {
@@ -209,7 +201,7 @@ function TruckTypeSelect({ value, onChange, placeholder = "Select type…" }: {
           </span>
         )}
         <span className={`flex-1 truncate ${value ? "font-semibold text-gray-900 dark:text-white" : "font-medium text-gray-400 dark:text-slate-500"}`}>
-          {value || placeholder}
+          {selectedOption?.name || value || placeholder}
         </span>
         <ChevronDown className={`w-4 h-4 text-gray-400 dark:text-slate-500 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
       </button>
@@ -225,21 +217,21 @@ function TruckTypeSelect({ value, onChange, placeholder = "Select type…" }: {
             transition={{ duration: 0.15, ease: "easeOut" }}
             className="bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-2xl shadow-xl shadow-gray-200/60 dark:shadow-black/40 overflow-hidden py-1.5 max-h-72 overflow-y-auto"
           >
-            {TRUCK_TYPE_OPTIONS.map(t => {
-              const m = TRUCK_TYPE_META[t];
-              const isSelected = t === value;
+            {options.map(t => {
+              const m = truckTypeChipStyle(t.code, t.name);
+              const isSelected = t.code === value;
               return (
-                <li key={t}>
+                <li key={t.id}>
                   <button
                     type="button"
-                    onClick={() => { onChange(t); setOpen(false); }}
+                    onClick={() => { onChange(t.code); setOpen(false); }}
                     className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left transition ${isSelected ? "bg-indigo-50 dark:bg-indigo-500/10" : "hover:bg-gray-50 dark:hover:bg-slate-800"}`}
                   >
                     <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${m.color} flex items-center justify-center shrink-0 shadow-sm`}>
                       <span className="text-[10px] font-black text-white">{m.abbr}</span>
                     </span>
                     <span className={`flex-1 text-sm font-semibold truncate ${isSelected ? "text-indigo-700 dark:text-indigo-300" : "text-gray-700 dark:text-slate-200"}`}>
-                      {t}
+                      {t.name}
                     </span>
                     {isSelected && <Check className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />}
                   </button>
@@ -255,8 +247,9 @@ function TruckTypeSelect({ value, onChange, placeholder = "Select type…" }: {
 }
 
 // ── owner card ────────────────────────────────────────────────────────────────
-function OwnerCard({ data, onAddTruck, onEditTruck, onDeleteTruck, onEditOwner }: {
+function OwnerCard({ data, truckTypes, onAddTruck, onEditTruck, onDeleteTruck, onEditOwner }: {
   data: Enriched;
+  truckTypes: TruckTypeOption[];
   onAddTruck: () => void;
   onEditTruck: (t: TruckObj) => void;
   onDeleteTruck: (t: TruckObj) => void;
@@ -321,7 +314,7 @@ function OwnerCard({ data, onAddTruck, onEditTruck, onDeleteTruck, onEditOwner }
           {trucks.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
               {visibleTrucks.map(t => (
-                <TruckChip key={t.id} truck={t} onEdit={() => onEditTruck(t)} onDelete={() => onDeleteTruck(t)} />
+                <TruckChip key={t.id} truck={t} truckTypes={truckTypes} onEdit={() => onEditTruck(t)} onDelete={() => onDeleteTruck(t)} />
               ))}
               {extraTrucks > 0 && (
                 <span className="inline-flex items-center text-xs font-bold text-gray-500 dark:text-slate-400 bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 px-2.5 py-1 rounded-lg">
@@ -465,6 +458,7 @@ function Pagination({ page, total, totalPages, onPage }: { page: number; total: 
 // ── page ──────────────────────────────────────────────────────────────────────
 export default function OwnersPage() {
   const { isAdmin, locationId, setLocationId } = useLocationFilter();
+  const { truckTypes } = useTruckTypes();
   const [locations, setLocations] = useState<LocationObj[]>([]);
 
   const [rows,    setRows]    = useState<Enriched[]>([]);
@@ -800,6 +794,7 @@ export default function OwnersPage() {
             <OwnerCard
               key={r.owner.id}
               data={r}
+              truckTypes={truckTypes}
               onAddTruck={() => { setAddTruck({ ownerId: r.owner.id }); setAddTruckValue(""); setAddTruckType(""); setActionErr(""); }}
               onEditTruck={(t) => { setEditTruck({ ownerId: r.owner.id, truckId: t.id, currentNumber: t.truck_number }); setEditValue(t.truck_number); setActionErr(""); }}
               onDeleteTruck={(t) => { setDeleteTruck({ ownerId: r.owner.id, truckId: t.id, truckNumber: t.truck_number }); setActionErr(""); }}
@@ -829,7 +824,7 @@ export default function OwnersPage() {
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-600 dark:text-slate-300 mb-1.5">Truck type <span className="text-red-400">*</span></label>
-            <TruckTypeSelect value={addTruckType} onChange={(v) => { setAddTruckType(v); setActionErr(""); }} />
+            <TruckTypeSelect value={addTruckType} onChange={(v) => { setAddTruckType(v); setActionErr(""); }} options={truckTypes} />
           </div>
           {actionErr && (
             <div className="flex items-start gap-2 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl px-3.5 py-2.5">

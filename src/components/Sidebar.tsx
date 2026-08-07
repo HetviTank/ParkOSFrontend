@@ -52,9 +52,10 @@ const NAV: NavGroup[] = [
   {
     section: "SETUP",
     items: [
-      { label: "Locations",         href: "/dashboard/locations", icon: MapPin  },
-      { label: "Divisions & Rates", href: "/dashboard/divisions", icon: Layers  },
-      { label: "Settings",          href: "/dashboard/settings",  icon: Settings },
+      { label: "Locations",         href: "/dashboard/locations",   icon: MapPin  },
+      { label: "Divisions & Rates", href: "/dashboard/divisions",   icon: Layers  },
+      { label: "Truck Types",       href: "/dashboard/truck-types", icon: Truck   },
+      { label: "Settings",          href: "/dashboard/settings",    icon: Settings },
     ],
   },
   {

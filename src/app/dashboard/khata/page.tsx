@@ -21,6 +21,7 @@ import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
 import { LocationSelect } from "@/components/ui/LocationSelect";
 
 import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
+import { useTruckTypes, truckTypeLabel, type TruckTypeOption } from "@/lib/truckTypes";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -67,14 +68,6 @@ interface Enriched extends Khata {
 interface BillTruck { truck_id: string; truck_number: string; session_count: number; total_days: number; total_amount: number }
 interface KhataBill { khata_id: string; period_start: string; billing_day: number; trucks: BillTruck[]; grand_total: number }
 interface LocationObj { id: string; name: string; city?: string | null }
-
-const TRUCK_TYPES = [
-  { value: "heavy", label: "Heavy (20T+)" },
-  { value: "medium", label: "Medium (10-20T)" },
-  { value: "light", label: "Light (<10T)" },
-  { value: "trailer", label: "Trailer" },
-  { value: "tanker", label: "Tanker" },
-];
 
 // ── formatters ────────────────────────────────────────────────────────────────
 function fmtDate(iso: string | null): string {
@@ -273,11 +266,12 @@ function MenuItem({ icon, label, onClick, disabled, danger }: { icon: React.Reac
   }`;
   return <button onClick={disabled ? undefined : onClick} disabled={disabled} className={cls}>{icon}{label}</button>;
 }
-function TruckChip({ kt, onEdit, onUnlink, unlinkBusy }: {
+function TruckChip({ kt, truckTypes, onEdit, onUnlink, unlinkBusy }: {
   kt: KhataTruckLink & { truck_number?: string; truck_type?: string };
+  truckTypes: TruckTypeOption[];
   onEdit: () => void; onUnlink: () => void; unlinkBusy: boolean;
 }) {
-  const typeLabel = kt.truck_type ? TRUCK_TYPES.find(t => t.value === kt.truck_type)?.label ?? kt.truck_type : undefined;
+  const typeLabel = kt.truck_type ? truckTypeLabel(truckTypes, kt.truck_type) : undefined;
   return (
     <div title={typeLabel} className="flex items-center gap-1 bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 text-blue-700 dark:text-blue-300 text-xs font-bold px-2.5 py-1 rounded-lg font-mono">
       <TruckIcon className="w-3 h-3 shrink-0" />{kt.truck_number ?? kt.truck_id.slice(0, 8)}
@@ -328,6 +322,7 @@ const OPTIONAL_COLS: { key: ColKey; label: string }[] = [
 // ── main page ─────────────────────────────────────────────────────────────────
 export default function KhataMasterPage() {
   const { isAdmin, locationId, setLocationId } = useLocationFilter();
+  const { truckTypes } = useTruckTypes();
   const [locations, setLocations] = useState<LocationObj[]>([]);
 
   const [rows, setRows] = useState<Enriched[]>([]);
@@ -400,7 +395,7 @@ export default function KhataMasterPage() {
   // edit-truck modal (change a linked truck's own number/type)
   const [editTruckTarget, setEditTruckTarget] = useState<{ row: Enriched; kt: KhataTruckLink & { truck_number?: string; truck_type?: string } } | null>(null);
   const [eTruckNumber, setETruckNumber] = useState("");
-  const [eTruckType, setETruckType] = useState("heavy");
+  const [eTruckType, setETruckType] = useState("");
   const [eTruckBusy, setETruckBusy] = useState(false);
   const [eTruckErr, setETruckErr] = useState("");
 
@@ -675,7 +670,7 @@ export default function KhataMasterPage() {
         truck_id = await resolveTruckId(num);
         setLinkNewType(null);
       } catch {
-        if (!linkNewType) { setLinkNewType("heavy"); setLinkErr(`"${num}" is not registered yet. Pick a type below and click Link to register & link it.`); return; }
+        if (!linkNewType) { setLinkNewType(truckTypes[0]?.code ?? ""); setLinkErr(`"${num}" is not registered yet. Pick a type below and click Link to register & link it.`); return; }
         const newTruck = await apiFetch<TruckObj>("/trucks", { method: "POST", body: JSON.stringify({ truck_number: num, truck_type: linkNewType, owner_id: row.owner_id }) });
         truckCache.current[newTruck.id] = newTruck;
         truck_id = newTruck.id;
@@ -703,7 +698,7 @@ export default function KhataMasterPage() {
   function openEditTruck(row: Enriched, kt: KhataTruckLink & { truck_number?: string; truck_type?: string }) {
     setEditTruckTarget({ row, kt });
     setETruckNumber(kt.truck_number ?? "");
-    setETruckType(kt.truck_type ?? "heavy");
+    setETruckType(kt.truck_type ?? truckTypes[0]?.code ?? "");
     setETruckErr("");
   }
   async function handleSaveTruckEdit() {
@@ -1027,7 +1022,7 @@ export default function KhataMasterPage() {
                           menuOpen={menuId === row.id} onToggleMenu={() => setMenuId(prev => prev === row.id ? null : row.id)} onCloseMenu={() => setMenuId(null)}
                           onView={() => openDetails(row)} onEdit={() => openEdit(row)} onToggleActive={() => toggleActive(row)} onDelete={() => openDelete(row)}
                           linkInput={linkInput} setLinkInput={setLinkInput} linkBusy={linkBusy} linkErr={linkErr} linkNewType={linkNewType} setLinkNewType={setLinkNewType}
-                          onLink={() => handleLink(row)} onUnlink={(ktId) => handleUnlink(row, ktId)} unlinkBusyId={unlinkBusyId} onEditTruck={openEditTruck}
+                          onLink={() => handleLink(row)} onUnlink={(ktId) => handleUnlink(row, ktId)} unlinkBusyId={unlinkBusyId} onEditTruck={openEditTruck} truckTypes={truckTypes}
                         />
                       ))}
                     </AnimatePresence>
@@ -1137,10 +1132,10 @@ export default function KhataMasterPage() {
             <div>
               <label className="block text-xs font-semibold text-gray-600 dark:text-slate-400 mb-1.5">Truck type</label>
               <div className="flex flex-wrap gap-1.5">
-                {TRUCK_TYPES.map(opt => (
-                  <button key={opt.value} type="button" onClick={() => setETruckType(opt.value)}
-                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition ${eTruckType === opt.value ? "bg-violet-600 text-white border-violet-600" : "bg-gray-50 dark:bg-slate-800 text-gray-600 dark:text-slate-300 border-gray-200 dark:border-slate-700 hover:border-violet-300"}`}>
-                    {opt.label}
+                {truckTypes.map(opt => (
+                  <button key={opt.id} type="button" onClick={() => setETruckType(opt.code)}
+                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition ${eTruckType === opt.code ? "bg-violet-600 text-white border-violet-600" : "bg-gray-50 dark:bg-slate-800 text-gray-600 dark:text-slate-300 border-gray-200 dark:border-slate-700 hover:border-violet-300"}`}>
+                    {opt.name}
                   </button>
                 ))}
               </div>
@@ -1168,7 +1163,7 @@ export default function KhataMasterPage() {
             linkInput={linkInput} setLinkInput={setLinkInput} linkBusy={linkBusy} linkErr={linkErr}
             linkNewType={linkNewType} setLinkNewType={setLinkNewType}
             onLink={() => handleLink(detailRow)} onUnlink={(ktId) => handleUnlink(detailRow, ktId)} unlinkBusyId={unlinkBusyId}
-            onEditTruck={openEditTruck}
+            onEditTruck={openEditTruck} truckTypes={truckTypes}
           />
         )}
       </Overlay>
@@ -1201,11 +1196,12 @@ interface RowProps {
   linkNewType: string | null; setLinkNewType: (v: string | null) => void;
   onLink: () => void; onUnlink: (ktId: string) => void; unlinkBusyId: string | null;
   onEditTruck: (row: Enriched, kt: KhataTruckLink & { truck_number?: string; truck_type?: string }) => void;
+  truckTypes: TruckTypeOption[];
 }
 function KhataRow({
   row, index, globalIndex, selected, onToggleSelect, expanded, onToggleExpand, highlighted, colVisible,
   menuOpen, onToggleMenu, onCloseMenu, onView, onEdit, onToggleActive, onDelete,
-  linkInput, setLinkInput, linkBusy, linkErr, linkNewType, setLinkNewType, onLink, onUnlink, unlinkBusyId, onEditTruck,
+  linkInput, setLinkInput, linkBusy, linkErr, linkNewType, setLinkNewType, onLink, onUnlink, unlinkBusyId, onEditTruck, truckTypes,
 }: RowProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
@@ -1294,7 +1290,7 @@ function KhataRow({
             ) : (
               <div className="flex flex-wrap gap-1">
                 {row.khataTrucks.slice(0, 3).map(kt => (
-                  <span key={kt.id} title={kt.truck_type ? TRUCK_TYPES.find(t => t.value === kt.truck_type)?.label ?? kt.truck_type : undefined}
+                  <span key={kt.id} title={kt.truck_type ? truckTypeLabel(truckTypes, kt.truck_type) : undefined}
                     className="text-[10px] font-mono font-bold bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300 px-1.5 py-0.5 rounded cursor-help">
                     {kt.truck_number ?? kt.truck_id.slice(0, 6)}
                   </span>
@@ -1403,7 +1399,7 @@ function KhataRow({
                 {row.khataTrucks.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5 mb-3">
                     {row.khataTrucks.map(kt => (
-                      <TruckChip key={kt.id} kt={kt} onEdit={() => onEditTruck(row, kt)} onUnlink={() => onUnlink(kt.id)} unlinkBusy={unlinkBusyId === kt.id} />
+                      <TruckChip key={kt.id} kt={kt} truckTypes={truckTypes} onEdit={() => onEditTruck(row, kt)} onUnlink={() => onUnlink(kt.id)} unlinkBusy={unlinkBusyId === kt.id} />
                     ))}
                   </div>
                 ) : (
@@ -1422,10 +1418,10 @@ function KhataRow({
                   <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-xl p-3 space-y-2 mt-2">
                     <p className="text-xs text-amber-700 dark:text-amber-300 flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5 shrink-0" />{linkErr}</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {TRUCK_TYPES.map(opt => (
-                        <button key={opt.value} type="button" onClick={() => setLinkNewType(opt.value)}
-                          className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border transition ${linkNewType === opt.value ? "bg-violet-600 text-white border-violet-600" : "bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 border-gray-200 dark:border-slate-700 hover:border-violet-300"}`}>
-                          {opt.label}
+                      {truckTypes.map(opt => (
+                        <button key={opt.id} type="button" onClick={() => setLinkNewType(opt.code)}
+                          className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border transition ${linkNewType === opt.code ? "bg-violet-600 text-white border-violet-600" : "bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 border-gray-200 dark:border-slate-700 hover:border-violet-300"}`}>
+                          {opt.name}
                         </button>
                       ))}
                     </div>
@@ -1451,9 +1447,10 @@ interface DetailsDrawerProps {
   linkNewType: string | null; setLinkNewType: (v: string | null) => void;
   onLink: () => void; onUnlink: (ktId: string) => void; unlinkBusyId: string | null;
   onEditTruck: (row: Enriched, kt: KhataTruckLink & { truck_number?: string; truck_type?: string }) => void;
+  truckTypes: TruckTypeOption[];
 }
 function DetailsDrawerBody({
-  row, bill, linkInput, setLinkInput, linkBusy, linkErr, linkNewType, setLinkNewType, onLink, onUnlink, unlinkBusyId, onEditTruck,
+  row, bill, linkInput, setLinkInput, linkBusy, linkErr, linkNewType, setLinkNewType, onLink, onUnlink, unlinkBusyId, onEditTruck, truckTypes,
 }: DetailsDrawerProps) {
   const status = deriveStatus(row);
   const overdue = isOverdue(row);
@@ -1524,7 +1521,7 @@ function DetailsDrawerBody({
         {row.khataTrucks.length ? (
           <div className="flex flex-wrap gap-1.5 mb-3">
             {row.khataTrucks.map(kt => (
-              <TruckChip key={kt.id} kt={kt} onEdit={() => onEditTruck(row, kt)} onUnlink={() => onUnlink(kt.id)} unlinkBusy={unlinkBusyId === kt.id} />
+              <TruckChip key={kt.id} kt={kt} truckTypes={truckTypes} onEdit={() => onEditTruck(row, kt)} onUnlink={() => onUnlink(kt.id)} unlinkBusy={unlinkBusyId === kt.id} />
             ))}
           </div>
         ) : <p className="text-sm text-gray-400 dark:text-slate-500 mb-3">No trucks linked yet — link one below.</p>}
@@ -1542,10 +1539,10 @@ function DetailsDrawerBody({
           <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-xl p-3 space-y-2 mt-2">
             <p className="text-xs text-amber-700 dark:text-amber-300 flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5 shrink-0" />{linkErr}</p>
             <div className="flex flex-wrap gap-1.5">
-              {TRUCK_TYPES.map(opt => (
-                <button key={opt.value} type="button" onClick={() => setLinkNewType(opt.value)}
-                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border transition ${linkNewType === opt.value ? "bg-violet-600 text-white border-violet-600" : "bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 border-gray-200 dark:border-slate-700 hover:border-violet-300"}`}>
-                  {opt.label}
+              {truckTypes.map(opt => (
+                <button key={opt.id} type="button" onClick={() => setLinkNewType(opt.code)}
+                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border transition ${linkNewType === opt.code ? "bg-violet-600 text-white border-violet-600" : "bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 border-gray-200 dark:border-slate-700 hover:border-violet-300"}`}>
+                  {opt.name}
                 </button>
               ))}
             </div>

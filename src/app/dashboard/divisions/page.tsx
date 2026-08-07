@@ -12,6 +12,7 @@ import {
 import { handleUnauthorized, useLocationFilter } from "@/lib/auth";
 import { LocationSelect } from "@/components/ui/LocationSelect";
 import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
+import { useTruckTypes, truckTypeLabel, divisionTypeStyle } from "@/lib/truckTypes";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -60,17 +61,6 @@ function divLocId(d: Division): string {
   return typeof d.location === "string" ? d.location : (d.location as LocationRef).id;
 }
 
-const TRUCK_TYPES = ["heavy", "medium", "light"];
-
-function divStyle(type: string): { grad: string; avatar: string; badge: string; ring: string; occ: string } {
-  switch (type.toLowerCase()) {
-    case "heavy":  return { grad: "from-violet-50 to-indigo-50", avatar: "bg-gradient-to-br from-violet-500 to-indigo-600", badge: "bg-violet-100 text-violet-700 border-violet-200", ring: "focus:ring-violet-400 focus:border-violet-400", occ: "bg-violet-400" };
-    case "medium": return { grad: "from-teal-50 to-cyan-50",     avatar: "bg-gradient-to-br from-teal-500 to-cyan-600",    badge: "bg-teal-100 text-teal-700 border-teal-200",    ring: "focus:ring-teal-400 focus:border-teal-400",    occ: "bg-teal-400" };
-    case "light":  return { grad: "from-emerald-50 to-green-50", avatar: "bg-gradient-to-br from-emerald-500 to-green-600", badge: "bg-emerald-100 text-emerald-700 border-emerald-200", ring: "focus:ring-emerald-400 focus:border-emerald-400", occ: "bg-emerald-400" };
-    default:       return { grad: "from-gray-50 to-slate-50",    avatar: "bg-gradient-to-br from-gray-400 to-slate-500",    badge: "bg-gray-100 text-gray-600 border-gray-200",    ring: "focus:ring-gray-400 focus:border-gray-400",    occ: "bg-gray-400" };
-  }
-}
-
 function statusStyle(s: string): { bg: string; text: string; dot: string } {
   switch (s.toLowerCase()) {
     case "active": return { bg: "bg-emerald-100", text: "text-emerald-700", dot: "bg-emerald-500" };
@@ -78,21 +68,6 @@ function statusStyle(s: string): { bg: string; text: string; dot: string } {
     default:       return { bg: "bg-gray-100",    text: "text-gray-600",    dot: "bg-gray-400" };
   }
 }
-
-function truckLabel(t: string): string {
-  if (t === "heavy")  return "Heavy trucks (20T+)";
-  if (t === "medium") return "Medium trucks (10–20T)";
-  if (t === "light")  return "Light trucks (<10T)";
-  return t.charAt(0).toUpperCase() + t.slice(1);
-}
-
-// Truck-type filter options for the "new division" form — reuses each type's
-// avatar gradient's base color as a dot, matching the card it will create.
-const TRUCK_TYPE_FILTER_OPTIONS = TRUCK_TYPES.map(t => ({
-  value: t,
-  label: truckLabel(t),
-  dot: t === "heavy" ? "bg-violet-500" : t === "medium" ? "bg-teal-500" : "bg-emerald-500",
-}));
 
 const DIVISION_STATUS_OPTIONS = ["active", "draft", "inactive"];
 
@@ -202,6 +177,7 @@ const inputCls = (ring: string) =>
 export default function DivisionsPage() {
   // Non-admin roles are locked to their assigned location — no "All locations" escape hatch.
   const { isAdmin, locationId: selLoc, setLocationId: setSelLoc } = useLocationFilter();
+  const { truckTypes } = useTruckTypes();
 
   const [locations, setLocations] = useState<LocationRef[]>([]);
   const [divisions, setDivisions] = useState<Division[]>([]);
@@ -229,7 +205,7 @@ export default function DivisionsPage() {
   // add-division form
   const [addOpen,   setAddOpen]   = useState(false);
   const [newName,        setNewName]        = useState("");
-  const [newType,        setNewType]        = useState("heavy");
+  const [newType,        setNewType]        = useState("");
   const [newSlots,       setNewSlots]       = useState("");
   const [newRate,        setNewRate]        = useState("");
   const [newGst,         setNewGst]         = useState("18");
@@ -250,6 +226,17 @@ export default function DivisionsPage() {
       .then(p => setSysRelaxHours(p.relaxation_hours ?? 0))
       .catch(() => {});
   }, []);
+
+  // default the "new division" truck-type field to the first master type once loaded
+  useEffect(() => {
+    if (truckTypes.length && !newType) setNewType(truckTypes[0].code);
+  }, [truckTypes, newType]);
+
+  const truckTypeFilterOptions = truckTypes.map(t => ({
+    value: t.code,
+    label: t.name,
+    dot: divisionTypeStyle(t.code).dot,
+  }));
 
   // load locations
   useEffect(() => {
@@ -414,7 +401,7 @@ export default function DivisionsPage() {
           })
         )
       ).catch(() => {});
-      setNewOk(true); setNewName(""); setNewType("heavy"); setNewSlots(""); setNewRate(""); setNewGst("18"); setNewStatus("active");
+      setNewOk(true); setNewName(""); setNewType(truckTypes[0]?.code ?? ""); setNewSlots(""); setNewRate(""); setNewGst("18"); setNewStatus("active");
       setTimeout(() => { setAddOpen(false); setNewOk(false); loadDivisions(selLoc); }, 1200);
     } catch (err) { setNewErr(err instanceof Error ? err.message : "Failed."); }
     finally { setNewBusy(false); }
@@ -453,7 +440,7 @@ export default function DivisionsPage() {
           {/* Add division button */}
           {!addOpen && (
             <button
-              onClick={() => { setAddOpen(true); setNewName(""); setNewType("heavy"); setNewSlots(""); setNewRate(""); setNewGst("18"); setNewStatus("active"); setNewErr(""); setNewOk(false); }}
+              onClick={() => { setAddOpen(true); setNewName(""); setNewType(truckTypes[0]?.code ?? ""); setNewSlots(""); setNewRate(""); setNewGst("18"); setNewStatus("active"); setNewErr(""); setNewOk(false); }}
               className="flex items-center gap-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-2xl px-4 py-2.5 shadow-sm shadow-blue-200 transition"
             >
               <Plus className="w-4 h-4" /> Add division
@@ -510,7 +497,7 @@ export default function DivisionsPage() {
                   className="w-full"
                   value={newType}
                   onChange={setNewType}
-                  options={TRUCK_TYPE_FILTER_OPTIONS}
+                  options={truckTypeFilterOptions}
                 />
               </div>
             </div>
@@ -616,7 +603,7 @@ export default function DivisionsPage() {
           )}
 
           {divisions.map((div, idx) => {
-            const style = divStyle(div.truck_type);
+            const style = divisionTypeStyle(div.truck_type);
             const occ   = occMap[div.id];
             const occupied   = occ?.occupied_slots ?? 0;
             const total      = Number(edits[div.id]?.slots ?? div.total_slots);
@@ -640,7 +627,7 @@ export default function DivisionsPage() {
                     <div className="flex items-center gap-2.5 flex-wrap">
                       <p className="text-base font-black text-gray-900">{div.name}</p>
                       <span className="text-sm font-semibold text-gray-400">—</span>
-                      <span className="text-sm font-semibold text-gray-500">{truckLabel(div.truck_type)}</span>
+                      <span className="text-sm font-semibold text-gray-500">{truckTypeLabel(truckTypes, div.truck_type)}</span>
                     </div>
                     {/* occupancy bar */}
                     <div className="flex items-center gap-2.5 mt-1.5">

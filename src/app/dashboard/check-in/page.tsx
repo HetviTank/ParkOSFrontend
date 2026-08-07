@@ -14,6 +14,7 @@ import {
 
 import { handleUnauthorized, isAdminRole } from "@/lib/auth";
 import { EnumFilterSelect } from "@/components/ui/EnumFilterSelect";
+import { useTruckTypes, truckTypeChipStyle, divisionTypeStyle, type TruckTypeOption } from "@/lib/truckTypes";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -58,15 +59,6 @@ interface DivItem    { id: string; name: string; truck_type: string; rate_per_da
 interface SlotItem   { id: string; code: string; status: string }
 interface KhataItem  { id: string; owner_id: string; monthly_rate: number; billing_day: number; grace_days: number; is_active: boolean; is_deleted: boolean }
 
-const TRUCK_TYPES   = ["Heavy (20T+)", "Heavy (10-20T)", "Medium (5-10T)", "Light (<5T)", "Trailer", "Tanker"];
-const TRUCK_TYPE_META: Record<string, { color: string; abbr: string }> = {
-  "Heavy (20T+)":   { color: "from-red-500 to-rose-600",      abbr: "H+" },
-  "Heavy (10-20T)": { color: "from-orange-500 to-red-500",    abbr: "H"  },
-  "Medium (5-10T)": { color: "from-amber-500 to-orange-500",  abbr: "M"  },
-  "Light (<5T)":    { color: "from-emerald-500 to-teal-600",  abbr: "L"  },
-  "Trailer":        { color: "from-indigo-500 to-violet-600", abbr: "Tr" },
-  "Tanker":         { color: "from-cyan-500 to-blue-600",     abbr: "Tk" },
-};
 const ID_PROOFS: Record<string, string> = {
   aadhaar: "Aadhaar Card", pan: "PAN Card",
   driving_license: "Driving License", passport: "Passport", voter_id: "Voter ID",
@@ -81,6 +73,7 @@ const STEPS = [
 // ── main component ────────────────────────────────────────────────────────────
 export default function CheckInPage() {
   const router = useRouter();
+  const { truckTypes } = useTruckTypes();
   const [toast, setToast] = useState<{ truck: string } | null>(null);
 
   // ── truck search
@@ -580,7 +573,7 @@ export default function CheckInPage() {
 
                 <div>
                   <label className={labelCls}>Truck type <Required /></label>
-                  <TruckTypeDropdown value={truckType} onChange={setTruckType} />
+                  <TruckTypeDropdown value={truckType} onChange={setTruckType} options={truckTypes} />
                 </div>
               </div>
 
@@ -1141,7 +1134,7 @@ const selectCls =
   "shadow-sm transition appearance-none cursor-pointer";
 
 // ── TruckTypeDropdown — modern, portal-positioned, mobile-safe ────────────────
-function TruckTypeDropdown({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function TruckTypeDropdown({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: TruckTypeOption[] }) {
   const [open, setOpen] = useState(false);
   const [rect,  setRect]  = useState<DOMRect | null>(null);
   const btnRef   = useRef<HTMLButtonElement>(null);
@@ -1174,7 +1167,8 @@ function TruckTypeDropdown({ value, onChange }: { value: string; onChange: (v: s
     return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
   }, [open]);
 
-  const meta = value ? TRUCK_TYPE_META[value] : null;
+  const selectedOption = value ? options.find(o => o.code === value) : null;
+  const meta = value ? truckTypeChipStyle(value, selectedOption?.name) : null;
   const estimatedPanelHeight = 300;
   const openUp = rect ? rect.bottom + estimatedPanelHeight > window.innerHeight && rect.top > window.innerHeight - rect.bottom : false;
   const panelStyle: React.CSSProperties = rect ? {
@@ -1202,7 +1196,7 @@ function TruckTypeDropdown({ value, onChange }: { value: string; onChange: (v: s
           </span>
         )}
         <span className={`flex-1 truncate ${value ? "font-semibold text-gray-900" : "font-medium text-gray-400"}`}>
-          {value || "Select type…"}
+          {selectedOption?.name || value || "Select type…"}
         </span>
         <ChevronDown className={`w-4 h-4 text-gray-400 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
       </button>
@@ -1210,20 +1204,20 @@ function TruckTypeDropdown({ value, onChange }: { value: string; onChange: (v: s
       {open && typeof window !== "undefined" && createPortal(
         <div ref={panelRef} style={panelStyle}
           className="bg-white rounded-2xl border border-gray-200 shadow-2xl shadow-gray-300/40 overflow-hidden py-1.5 max-h-80 overflow-y-auto">
-          {TRUCK_TYPES.map(t => {
-            const m = TRUCK_TYPE_META[t];
-            const isSelected = t === value;
+          {options.map(t => {
+            const m = truckTypeChipStyle(t.code, t.name);
+            const isSelected = t.code === value;
             return (
               <button
-                key={t}
+                key={t.id}
                 type="button"
-                onClick={() => { onChange(t); setOpen(false); }}
+                onClick={() => { onChange(t.code); setOpen(false); }}
                 className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left transition ${isSelected ? "bg-blue-50" : "hover:bg-gray-50"}`}
               >
                 <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${m.color} flex items-center justify-center shrink-0 shadow-sm`}>
                   <span className="text-[10px] font-black text-white">{m.abbr}</span>
                 </span>
-                <span className={`flex-1 text-sm font-semibold truncate ${isSelected ? "text-blue-700" : "text-gray-800"}`}>{t}</span>
+                <span className={`flex-1 text-sm font-semibold truncate ${isSelected ? "text-blue-700" : "text-gray-800"}`}>{t.name}</span>
                 {isSelected && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
               </button>
             );
@@ -1237,12 +1231,8 @@ function TruckTypeDropdown({ value, onChange }: { value: string; onChange: (v: s
 
 // ── DivisionDropdown ──────────────────────────────────────────────────────────
 function divTypeStyle(t: string) {
-  switch (t.toLowerCase()) {
-    case "heavy":  return { pill: "bg-violet-100 text-violet-700", avatar: "bg-gradient-to-br from-violet-500 to-indigo-600", dot: "bg-violet-400" };
-    case "medium": return { pill: "bg-teal-100 text-teal-700",     avatar: "bg-gradient-to-br from-teal-500 to-cyan-600",    dot: "bg-teal-400" };
-    case "light":  return { pill: "bg-emerald-100 text-emerald-700", avatar: "bg-gradient-to-br from-emerald-500 to-green-600", dot: "bg-emerald-400" };
-    default:       return { pill: "bg-gray-100 text-gray-600",     avatar: "bg-gradient-to-br from-gray-400 to-slate-500",   dot: "bg-gray-400" };
-  }
+  const s = divisionTypeStyle(t);
+  return { pill: s.pill, avatar: s.avatar, dot: s.dot };
 }
 
 function DivisionDropdown({ divisions, divisionId, onSelect, loading, disabled, occupancy }: {
